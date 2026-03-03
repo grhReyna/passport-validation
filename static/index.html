@@ -1,0 +1,890 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Verificador de Pasaportes</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        :root {
+            --primary: #193d6d;
+            --secondary: #ffd700;
+            --success: #28a745;
+            --warning: #ffc107;
+            --danger: #dc3545;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            background: linear-gradient(135deg, var(--primary) 0%, #0f2847 100%);
+            color: #333;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            min-height: 100vh;
+        }
+
+        header {
+            background: linear-gradient(90deg, var(--primary), #0f2847);
+            color: white;
+            padding: 20px 0;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+        }
+
+        header h1 {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            margin: 0;
+        }
+
+        .container-main {
+            max-width: 1200px;
+            margin-top: 40px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            border: none;
+            border-radius: 15px;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+
+        .card-header {
+            background: linear-gradient(90deg, var(--primary), #0f2847);
+            color: white;
+            border: none;
+            padding: 20px;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .upload-area {
+            border: 2px dashed var(--primary);
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            background: #f8f9fa;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 20px;
+        }
+
+        .upload-area:hover {
+            border-color: var(--secondary);
+            background: #fff;
+            transform: translateY(-2px);
+        }
+
+        .upload-area.dragover {
+            border-color: var(--secondary);
+            background: #fffacd;
+        }
+
+        .upload-area i {
+            font-size: 3rem;
+            color: var(--primary);
+            margin-bottom: 10px;
+        }
+
+        .camera-container {
+            position: relative;
+            background: #000;
+            border-radius: 10px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+
+        #cameraFeed {
+            width: 100%;
+            height: 400px;
+            display: block;
+        }
+
+        .preview-image {
+            width: 100%;
+            max-height: 400px;
+            border-radius: 10px;
+            object-fit: contain;
+        }
+
+        .btn-custom {
+            border-radius: 8px;
+            padding: 10px 24px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .btn-primary {
+            background: linear-gradient(90deg, var(--primary), #0f2847);
+            border: none;
+        }
+
+        .btn-primary:hover {
+            background: linear-gradient(90deg, #0f2847, var(--primary));
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(25, 61, 109, 0.3);
+        }
+
+        .btn-secondary {
+            background: var(--secondary);
+            color: var(--primary);
+            border: none;
+        }
+
+        .btn-secondary:hover {
+            background: #ffed4e;
+            transform: translateY(-2px);
+        }
+
+        .result-container {
+            display: none;
+            animation: slideDown 0.5s ease;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-20px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .result-badge {
+            display: inline-block;
+            padding: 12px 24px;
+            border-radius: 50px;
+            font-weight: 700;
+            font-size: 1.2rem;
+            margin: 10px 0;
+        }
+
+        .result-badge.pass {
+            background: linear-gradient(90deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .result-badge.review {
+            background: linear-gradient(90deg, #ffc107, #fd7e14);
+            color: white;
+        }
+
+        .result-badge.reject {
+            background: linear-gradient(90deg, #dc3545, #c82333);
+            color: white;
+        }
+
+        .score-circle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 150px;
+            height: 150px;
+            border-radius: 50%;
+            font-size: 2rem;
+            font-weight: 700;
+            margin: 20px 0;
+            background: linear-gradient(135deg, var(--primary), #0f2847);
+            color: white;
+            box-shadow: 0 5px 20px rgba(25, 61, 109, 0.3);
+        }
+
+        .score-circle.high {
+            background: linear-gradient(135deg, #28a745, #20c997);
+        }
+
+        .score-circle.medium {
+            background: linear-gradient(135deg, #ffc107, #fd7e14);
+        }
+
+        .score-circle.low {
+            background: linear-gradient(135deg, #dc3545, #c82333);
+        }
+
+        .detail-item {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .detail-item:last-child {
+            border-bottom: none;
+        }
+
+        .detail-label {
+            font-weight: 600;
+            color: var(--primary);
+        }
+
+        .detail-value {
+            color: #666;
+            text-align: right;
+        }
+
+        .anomaly {
+            background: #fff3cd;
+            border-left: 4px solid var(--warning);
+            padding: 12px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-size: 0.95rem;
+        }
+
+        .anomaly i {
+            color: var(--warning);
+            margin-right: 8px;
+        }
+
+        .recommendation {
+            background: #e7f3ff;
+            border-left: 4px solid var(--primary);
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 5px;
+            font-style: italic;
+            color: var(--primary);
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 30px;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid var(--primary);
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #eee;
+        }
+
+        .tab-btn {
+            background: none;
+            border: none;
+            padding: 12px 20px;
+            cursor: pointer;
+            font-weight: 600;
+            color: #999;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s ease;
+        }
+
+        .tab-btn.active {
+            color: var(--primary);
+            border-bottom-color: var(--primary);
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .confidence-bar {
+            background: #e9ecef;
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin: 5px 0;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--primary), var(--secondary));
+            transition: width 0.5s ease;
+        }
+
+        .mt-40 {
+            margin-top: 40px;
+        }
+
+        .error-alert {
+            display: none;
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .error-alert i {
+            margin-right: 10px;
+        }
+
+        footer {
+            text-align: center;
+            padding: 20px;
+            color: rgba(255,255,255,0.7);
+            margin-top: 40px;
+        }
+
+        @media (max-width: 768px) {
+            .container-main {
+                margin-top: 20px;
+            }
+
+            .tabs {
+                flex-wrap: wrap;
+            }
+
+            .score-circle {
+                width: 120px;
+                height: 120px;
+                font-size: 1.5rem;
+            }
+
+            #cameraFeed {
+                height: 300px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header>
+        <div class="container-fluid">
+            <h1>
+                <i class="bi bi-passport"></i>
+                Verificador de Pasaportes Mexicanos
+            </h1>
+            <small>Detección de Falsificaciones con IA</small>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="container container-main">
+        <!-- Tabs -->
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchTab('upload')">
+                <i class="bi bi-upload"></i> Subir Foto
+            </button>
+            <button class="tab-btn" onclick="switchTab('camera')">
+                <i class="bi bi-camera"></i> Cámara en Vivo
+            </button>
+        </div>
+
+        <!-- Upload Tab -->
+        <div id="uploadTab" class="tab-content active">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-cloud-upload"></i>
+                    Subir Imagen de Pasaporte
+                </div>
+                <div class="card-body p-5">
+                    <div class="upload-area" id="uploadArea">
+                        <i class="bi bi-image"></i>
+                        <h5>Arrastra tu foto aquí</h5>
+                        <p class="text-muted mb-3">o haz clic para seleccionar</p>
+                        <small class="text-secondary">PNG, JPG (máx 20MB)</small>
+                    </div>
+
+                    <input type="file" id="fileInput" accept="image/*" style="display: none;">
+
+                    <div id="previewContainer" style="display: none;">
+                        <img id="previewImage" class="preview-image" alt="Vista previa">
+                        <div class="mt-3">
+                            <button class="btn btn-secondary me-2" onclick="clearUpload()">
+                                <i class="bi bi-x-circle"></i> Limpiar
+                            </button>
+                            <button class="btn btn-primary" onclick="analyzeImage()">
+                                <i class="bi bi-check-circle"></i> Analizar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Camera Tab -->
+        <div id="cameraTab" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-camera"></i>
+                    Captura en Tiempo Real
+                </div>
+                <div class="card-body p-5">
+                    <div class="camera-container">
+                        <video id="cameraFeed" playsinline autoplay muted></video>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-6">
+                            <button class="btn btn-primary w-100" onclick="startCamera()">
+                                <i class="bi bi-play-circle"></i> Iniciar Cámara
+                            </button>
+                        </div>
+                        <div class="col-md-6">
+                            <button class="btn btn-secondary w-100" onclick="capturePhoto()">
+                                <i class="bi bi-camera-fill"></i> Capturar Foto
+                            </button>
+                        </div>
+                    </div>
+
+                    <div id="cameraPreviewContainer" style="display: none; margin-top: 20px;">
+                        <img id="cameraPreviewImage" class="preview-image" alt="Captura">
+                        <div class="mt-3">
+                            <button class="btn btn-secondary me-2" onclick="clearCamera()">
+                                <i class="bi bi-x-circle"></i> Limpiar
+                            </button>
+                            <button class="btn btn-primary" onclick="analyzeCamera()">
+                                <i class="bi bi-check-circle"></i> Analizar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Loading -->
+        <div id="loadingContainer" class="loading">
+            <div class="spinner"></div>
+            <p>Analizando pasaporte...</p>
+            <small class="text-muted">Esto puede tomar unos segundos</small>
+        </div>
+
+        <!-- Error -->
+        <div id="errorAlert" class="error-alert">
+            <i class="bi bi-exclamation-triangle"></i>
+            <span id="errorMessage"></span>
+        </div>
+
+        <!-- Results -->
+        <div id="resultContainer" class="result-container mt-40">
+            <div class="card">
+                <div class="card-header">
+                    <i class="bi bi-check-square"></i>
+                    Resultado del Análisis
+                </div>
+                <div class="card-body p-5">
+                    <!-- Score Circle -->
+                    <div style="text-align: center;">
+                        <div id="scoreCircle" class="score-circle"></div>
+                        <div id="resultBadge" class="result-badge"></div>
+                    </div>
+
+                    <!-- Tabs for Results -->
+                    <div class="tabs mt-40" style="border-bottom: 1px solid #ddd;">
+                        <button class="tab-btn active" onclick="switchResultTab('summary')">
+                            <i class="bi bi-file-text"></i> Resumen
+                        </button>
+                        <button class="tab-btn" onclick="switchResultTab('details')">
+                            <i class="bi bi-info-circle"></i> Detalles
+                        </button>
+                        <button class="tab-btn" onclick="switchResultTab('anomalies')">
+                            <i class="bi bi-exclamation-circle"></i> Anomalías
+                        </button>
+                    </div>
+
+                    <!-- Summary Tab -->
+                    <div id="summaryTab" class="tab-content active mt-3">
+                        <div id="recomendacion" class="recommendation"></div>
+                        <div class="detail-item">
+                            <span class="detail-label">Confianza OCR:</span>
+                            <span class="detail-value" id="ocrConfidence">-</span>
+                        </div>
+                        <div class="confidence-bar">
+                            <div class="confidence-fill" id="ocrBar" style="width: 0%"></div>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Confianza MRZ:</span>
+                            <span class="detail-value" id="mrzConfidence">-</span>
+                        </div>
+                        <div class="confidence-bar">
+                            <div class="confidence-fill" id="mrzBar" style="width: 0%"></div>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Tiempo de Procesamiento:</span>
+                            <span class="detail-value" id="processingTime">-</span>
+                        </div>
+                    </div>
+
+                    <!-- Details Tab -->
+                    <div id="detailsTab" class="tab-content mt-3">
+                        <div id="detailsContent"></div>
+                    </div>
+
+                    <!-- Anomalies Tab -->
+                    <div id="anomaliesTab" class="tab-content mt-3">
+                        <div id="anomaliesContent"></div>
+                    </div>
+
+                    <button class="btn btn-secondary mt-4 w-100" onclick="resetAnalysis()">
+                        <i class="bi bi-arrow-clockwise"></i> Analizar Otra Imagen
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer>
+        <p>© 2026 Sistema de Detección de Pasaportes Falsos | Proyecto de Maestría en Innovación</p>
+    </footer>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        const API_BASE_URL = 'http://127.0.0.1:8888';
+        let currentCamera = null;
+        let currentAnalysisType = 'upload'; // 'upload' or 'camera'
+
+        // ============ FILE UPLOAD HANDLERS ============
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            handleFileSelect(e.dataTransfer.files[0]);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            handleFileSelect(e.target.files[0]);
+        });
+
+        function handleFileSelect(file) {
+            if (!file) return;
+
+            if (!file.type.startsWith('image/')) {
+                showError('Por favor selecciona un archivo de imagen');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('previewImage').src = e.target.result;
+                document.getElementById('previewContainer').style.display = 'block';
+                uploadArea.style.display = 'none';
+            };
+            reader.readAsDataURL(file);
+        }
+
+        function clearUpload() {
+            fileInput.value = '';
+            document.getElementById('previewContainer').style.display = 'none';
+            uploadArea.style.display = 'block';
+        }
+
+        // ============ CAMERA HANDLERS ============
+
+        async function startCamera() {
+            try {
+                if (currentCamera && currentCamera.getTracks().length > 0) {
+                    return;
+                }
+
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }
+                });
+
+                const video = document.getElementById('cameraFeed');
+                video.srcObject = stream;
+                currentCamera = stream;
+                
+                // Ocultar contenedor de preview
+                document.getElementById('cameraPreviewContainer').style.display = 'none';
+            } catch (error) {
+                showError('No se pudo acceder a la cámara: ' + error.message);
+            }
+        }
+
+        function capturePhoto() {
+            const video = document.getElementById('cameraFeed');
+            const canvas = document.createElement('canvas');
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(video, 0, 0);
+
+            const imageData = canvas.toDataURL('image/jpeg');
+            document.getElementById('cameraPreviewImage').src = imageData;
+            document.getElementById('cameraPreviewContainer').style.display = 'block';
+        }
+
+        function clearCamera() {
+            document.getElementById('cameraPreviewContainer').style.display = 'none';
+            startCamera();
+        }
+
+        function stopCamera() {
+            if (currentCamera) {
+                currentCamera.getTracks().forEach(track => track.stop());
+                currentCamera = null;
+            }
+        }
+
+        // ============ ANALYSIS HANDLERS ============
+
+        async function analyzeImage() {
+            const file = fileInput.files[0];
+            if (!file) {
+                showError('Por favor selecciona una imagen');
+                return;
+            }
+
+            currentAnalysisType = 'upload';
+            await sendToAPI(file);
+        }
+
+        async function analyzeCamera() {
+            const imageData = document.getElementById('cameraPreviewImage').src;
+            if (!imageData) {
+                showError('Por favor captura una foto');
+                return;
+            }
+
+            // Convertir data URL a blob
+            const blob = await (await fetch(imageData)).blob();
+            const file = new File([blob], 'camera-capture.jpg', { type: 'image/jpeg' });
+
+            currentAnalysisType = 'camera';
+            await sendToAPI(file);
+        }
+
+        async function sendToAPI(file) {
+            showLoading(true);
+            hideError();
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+
+                const response = await fetch(`${API_BASE_URL}/verify-passport`, {
+                    method: 'POST',
+                    body: formData,
+                    mode: 'cors'
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.detail || `Error ${response.status}`);
+                }
+
+                const result = await response.json();
+                
+                console.log('Respuesta completa del servidor:', result);
+                
+                // Validar que tenemos algún resultado
+                if (!result) {
+                    throw new Error('Respuesta vacía del servidor');
+                }
+                
+                displayResults(result);
+            } catch (error) {
+                showError('Error: ' + error.message);
+                console.error('Error completo:', error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayResults(result) {
+            console.log('Procesando resultado:', result);
+            
+            // Determinar estructura: puede ser plana o con final_result
+            let final;
+            if (result.final_result) {
+                // Estructura anidada
+                final = result.final_result;
+            } else if (result.autenticidad_score !== undefined) {
+                // Estructura plana
+                final = result;
+            } else {
+                showError('Estructura de respuesta no reconocida');
+                return;
+            }
+
+            // Validar campos requeridos
+            if (final.autenticidad_score === undefined || final.autenticidad_score === null) {
+                showError('Respuesta incompleta: sin score de autenticidad');
+                return;
+            }
+
+            const score = final.autenticidad_score || 0;
+            const estado = final.estado || 'UNKNOWN';
+
+            console.log(`Score: ${score}, Estado: ${estado}`);
+
+            // Score circle
+            const scoreCircle = document.getElementById('scoreCircle');
+            scoreCircle.textContent = score.toFixed(1) + '%';
+            scoreCircle.className = 'score-circle';
+            if (score >= 90) scoreCircle.classList.add('high');
+            else if (score >= 70) scoreCircle.classList.add('medium');
+            else scoreCircle.classList.add('low');
+
+            // Result badge (PASS, REVIEW, REJECT)
+            const badgeMap = {
+                'PASS': { class: 'pass', text: '✓ AUTÉNTICO', icon: 'bi-check-circle' },
+                'REVIEW': { class: 'review', text: '⚠ REVISAR', icon: 'bi-exclamation-circle' },
+                'REJECT': { class: 'reject', text: '✗ FALSIFICADO', icon: 'bi-x-circle' }
+            };
+
+            const badge = badgeMap[estado] || badgeMap['REVIEW'];
+            const resultBadge = document.getElementById('resultBadge');
+            resultBadge.className = 'result-badge ' + badge.class;
+            resultBadge.innerHTML = `<i class="bi ${badge.icon}"></i> ${badge.text}`;
+
+            // Confidence bars
+            const ocrConf = final.confianza && typeof final.confianza === 'object' && final.confianza.ocr 
+                ? final.confianza.ocr * 100 
+                : 0;
+            const mrzConf = final.confianza && typeof final.confianza === 'object' && final.confianza.mrz 
+                ? final.confianza.mrz * 100 
+                : 0;
+            
+            document.getElementById('ocrConfidence').textContent = ocrConf.toFixed(1) + '%';
+            document.getElementById('ocrBar').style.width = ocrConf + '%';
+
+            document.getElementById('mrzConfidence').textContent = mrzConf.toFixed(1) + '%';
+            document.getElementById('mrzBar').style.width = mrzConf + '%';
+
+            const processingTime = result.processing_time_ms || 0;
+            document.getElementById('processingTime').textContent = processingTime.toFixed(0) + 'ms';
+
+            // Recomendación
+            const recomendacion = final.recomendacion || final.recommendation || 'Análisis completado';
+            document.getElementById('recomendacion').textContent = recomendacion;
+
+            // Detalles
+            let detailsHTML = '';
+            if (final.detalles) {
+                for (const [key, value] of Object.entries(final.detalles)) {
+                    const displayValue = typeof value === 'object' ? JSON.stringify(value) : value;
+                    detailsHTML += `
+                        <div class="detail-item">
+                            <span class="detail-label">${key}:</span>
+                            <span class="detail-value">${displayValue}</span>
+                        </div>
+                    `;
+                }
+            }
+            
+            // Si no hay detalles, mostrar info básica
+            if (!detailsHTML) {
+                detailsHTML = `
+                    <div class="detail-item">
+                        <span class="detail-label">ID:</span>
+                        <span class="detail-value">${result.id || 'N/A'}</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Timestamp:</span>
+                        <span class="detail-value">${result.timestamp || 'N/A'}</span>
+                    </div>
+                `;
+            }
+            
+            document.getElementById('detailsContent').innerHTML = detailsHTML;
+
+            // Anomalías
+            let anomaliesHTML = '';
+            if (final.anomalias && Array.isArray(final.anomalias) && final.anomalias.length > 0) {
+                for (const anomaly of final.anomalias) {
+                    anomaliesHTML += `<div class="anomaly"><i class="bi bi-exclamation-triangle"></i> ${anomaly}</div>`;
+                }
+            } else {
+                anomaliesHTML = '<p class="text-muted">✓ Sin anomalías detectadas</p>';
+            }
+            document.getElementById('anomaliesContent').innerHTML = anomaliesHTML;
+
+            // Mostrar resultados
+            document.getElementById('resultContainer').style.display = 'block';
+            document.documentElement.scrollTop = 0;
+        }
+
+        // ============ UI HELPERS ============
+
+        function switchTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+            document.getElementById(tabName + 'Tab').classList.add('active');
+            event.target.classList.add('active');
+
+            if (tabName === 'camera' && !currentCamera) {
+                startCamera();
+            }
+        }
+
+        function switchResultTab(tabName) {
+            document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+            event.target.parentElement.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+
+            document.getElementById(tabName + 'Tab').classList.add('active');
+            event.target.classList.add('active');
+        }
+
+        function showLoading(show) {
+            document.getElementById('loadingContainer').style.display = show ? 'block' : 'none';
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            document.getElementById('errorAlert').style.display = 'block';
+        }
+
+        function hideError() {
+            document.getElementById('errorAlert').style.display = 'none';
+        }
+
+        function resetAnalysis() {
+            document.getElementById('resultContainer').style.display = 'none';
+            if (currentAnalysisType === 'upload') {
+                clearUpload();
+            } else {
+                clearCamera();
+            }
+        }
+
+        // Cleanup on page unload
+        window.addEventListener('unload', () => {
+            stopCamera();
+        });
+    </script>
+</body>
+</html>
