@@ -181,6 +181,25 @@ async def verify_passport_debug(file: UploadFile = File(...)):
         import cv2
         import numpy as np
         from src import mrz_roi_detector, preprocessing
+
+        def _json_safe(value):
+            if isinstance(value, dict):
+                return {k: _json_safe(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [_json_safe(v) for v in value]
+            if isinstance(value, tuple):
+                return [_json_safe(v) for v in value]
+            if isinstance(value, np.integer):
+                return int(value)
+            if isinstance(value, np.floating):
+                return float(value)
+            if isinstance(value, np.bool_):
+                return bool(value)
+            if isinstance(value, np.ndarray):
+                return value.tolist()
+            if isinstance(value, np.generic):
+                return value.item()
+            return value
         
         contents = await file.read()
         
@@ -243,7 +262,7 @@ async def verify_passport_debug(file: UploadFile = File(...)):
             "confianzas": result.get("final_result", {}).get("confianza", {})
         }
         
-        return JSONResponse(content=debug_info)
+        return JSONResponse(content=_json_safe(debug_info))
         
     except Exception as e:
         logger.exception(f"Error en debug: {str(e)}")

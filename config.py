@@ -47,8 +47,10 @@ DENOISE_SEARCH_WINDOW = 21
 # OCR - TROCR
 # ============================================================================
 
-# Modelo TrOCR preentrenado para documentos impresos
-TROCR_MODEL_NAME = "microsoft/trocr-base-printed"
+# Modelo TrOCR finetuned para pasaportes mexicanos
+# Se usa el modelo local entrenado; fallback al base de HuggingFace si no existe
+TROCR_MODEL_NAME = "models/trocr-finetuned"
+TROCR_BASE_MODEL = "microsoft/trocr-base-printed"
 
 # Umbral de confianza para tokens OCR
 OCR_CONFIDENCE_THRESHOLD = 0.65
@@ -87,7 +89,7 @@ OCR_WEIGHT = 0.40      # Extracción de texto OCR
 MRZ_WEIGHT = 0.60      # Validación de MRZ
 
 # Umbrales de decisión
-PASS_THRESHOLD = 0.90      # Score >= 90% → PASS (aceptar)
+PASS_THRESHOLD = 0.85      # Score >= 85% → PASS (aceptar)
 REVIEW_THRESHOLD = 0.70    # 70% <= Score < 90% → REVIEW (manual)
 # Score < 70% → REJECT (rechazar)
 

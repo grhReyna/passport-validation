@@ -293,18 +293,32 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
                    _model_cache["processor"], 
                    _model_cache["device"])
         
-        logger.info(f"Cargando modelo TrOCR: {model_name}")
-        
         # Determinar dispositivo
         device = _get_device()
         
-        # Cargar modelo y processor
-        processor = TrOCRProcessor.from_pretrained(model_name)
-        model = VisionEncoderDecoderModel.from_pretrained(model_name)
+        # Intentar cargar modelo local finetuned primero
+        loaded = False
+        from pathlib import Path as _Path
+        if _Path(model_name).exists():
+            try:
+                logger.info(f"Cargando modelo finetuned local: {model_name}")
+                processor = TrOCRProcessor.from_pretrained(model_name)
+                model = VisionEncoderDecoderModel.from_pretrained(model_name)
+                loaded = True
+                logger.info("✓ Modelo finetuned local cargado exitosamente")
+            except Exception as e:
+                logger.warning(f"No se pudo cargar modelo local: {e}")
+        
+        if not loaded:
+            # Fallback al modelo base de HuggingFace
+            fallback = getattr(config, 'TROCR_BASE_MODEL', model_name)
+            logger.info(f"Cargando modelo TrOCR: {fallback}")
+            processor = TrOCRProcessor.from_pretrained(fallback)
+            model = VisionEncoderDecoderModel.from_pretrained(fallback)
+            logger.info("✓ Modelo TrOCR base cargado exitosamente")
+        
         model.to(device)
         model.eval()  # Modo evaluación
-        
-        logger.info("✓ Modelo TrOCR cargado exitosamente")
         
         # Guardar en caché
         _model_cache["model"] = model

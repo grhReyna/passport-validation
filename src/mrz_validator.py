@@ -525,17 +525,45 @@ def validate_mrz(mrz_lines: List[str]) -> Dict:
                 passport_found = passport_match.group(0).replace(' ', '').replace('O', '0')
                 logger.warning(f"\n✓✓✓ NÚMERO DETECTADO: {passport_found} ✓✓✓")
                 
+                # Score granular según calidad de detección
+                # Base alto: detectar un número de pasaporte mexicano válido
+                # ES la validación principal del documento.
+                mrz_conf = 0.80  # Base: número encontrado (formato letra+dígitos)
+                
+                # Bonus: detectó líneas MRZ con P<MEX (indica formato ICAO parcial)
+                has_pmex = any('P<MEX' in str(l).upper().replace(' ', '') or 'PMEX' in str(l).upper().replace(' ', '') for l in mrz_lines)
+                if has_pmex:
+                    mrz_conf += 0.10
+                
+                # Bonus: número largo y válido (letra + 8-9 dígitos exactos)
+                clean_num = passport_found.replace(' ', '')
+                if re.match(r'^[A-Z]\d{8,9}$', clean_num):
+                    mrz_conf += 0.05
+                
+                # Bonus: detectó más de un dato (ej. nombre + número)
+                if len(mrz_lines) >= 2:
+                    mrz_conf += 0.05
+                
+                # Bonus: texto contiene datos MRZ adicionales (fechas, MEX, chevrons)
+                chevron_count = all_text.count('<')
+                if chevron_count >= 5:
+                    mrz_conf += 0.05
+                
+                mrz_conf = min(mrz_conf, 0.95)  # Tope sin ICAO completo
+                
                 result["mrz_detected"] = True
                 result["mrz_valid"] = True
-                result["mrz_confidence_score"] = 0.70
+                result["mrz_confidence_score"] = mrz_conf
                 result["format"] = "MEXICAN"
                 result["details"] = {
                     "passport_number": passport_found,
-                    "type": "MEXICAN"
+                    "type": "MEXICAN",
+                    "has_pmex": has_pmex,
+                    "mrz_lines_count": len(mrz_lines),
                 }
                 logger.warning(f"\n{'='*70}")
                 logger.warning(f"Pasaporte mexicano validado: {passport_found}")
-                logger.warning(f"MRZ Confidence Score: 0.70 (70%)")
+                logger.warning(f"MRZ Confidence Score: {mrz_conf:.2f} ({mrz_conf*100:.0f}%)")
                 logger.warning(f"{'='*70}\n")
                 return result
             

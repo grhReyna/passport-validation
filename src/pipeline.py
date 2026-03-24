@@ -75,6 +75,7 @@ class PassportVerifier:
         }
 
         highres_document_image = None
+        original_full_image = None
         
         try:
             self.logger.info("=" * 60)
@@ -93,6 +94,7 @@ class PassportVerifier:
                 # Preparar versión de alta resolución para MRZ dedicado
                 try:
                     original_image = preprocessing.load_image(image_input)
+                    original_full_image = original_image.copy()  # Guardar copia original para detección IA
                     highres_roi = preprocessing.detect_passport_roi(original_image)
                     highres_document_image = preprocessing.crop_roi(original_image, highres_roi)
                     highres_document_image = preprocessing.ensure_landscape_orientation(highres_document_image)
@@ -263,17 +265,66 @@ class PassportVerifier:
             try:
                 validator = AuthenticityValidator()
                 
-                # Obtener scores previos
-                ocr_score = float(ocr_result.get("ocr_avg_confidence", 0))
+                # ---- DOCUMENT QUALITY SCORE ----
+                # En lugar de usar la confianza cruda de TrOCR (que es baja ~0.3
+                # por naturaleza del modelo), construimos un score compuesto
+                # basado en QUÉ se detectó exitosamente en el documento.
+                
+                raw_ocr_conf = float(ocr_result.get("ocr_avg_confidence", 0))
                 mrz_score = float(mrz_result.get("mrz_confidence_score", 0))
-
-                # Si validó formato mexicano por número de pasaporte, elevar piso de OCR.
-                if mrz_result.get("mrz_valid") and mrz_result.get("format") == "MEXICAN":
-                    ocr_score = max(ocr_score, 0.45)
+                
+                # Base: imagen procesada y OCR ejecutado correctamente
+                doc_quality = 0.65
+                
+                # Factor 1: OCR extrajo texto con confianza razonable
+                if raw_ocr_conf >= 0.50:
+                    doc_quality += 0.08
+                elif raw_ocr_conf >= 0.30:
+                    doc_quality += 0.05
+                
+                # Factor 2: Se encontró número de pasaporte válido (señal más fuerte)
+                has_passport_number = bool(mrz_result.get("mrz_valid") and mrz_result.get("details", {}).get("passport_number"))
+                if has_passport_number:
+                    doc_quality += 0.10
+                
+                # Factor 3: Se detectó ROI de zona MRZ en la imagen
+                mrz_roi_found = "mrz_ocr_result" in locals() and mrz_ocr_result.get("roi") is not None
+                if mrz_roi_found:
+                    doc_quality += 0.05
+                
+                # Factor 4: Se detectaron múltiples líneas MRZ
+                num_dedicated_lines = len(dedicated_mrz_lines) if "dedicated_mrz_lines" in locals() else 0
+                if num_dedicated_lines >= 2:
+                    doc_quality += 0.05
+                elif len(mrz_lines) >= 2:
+                    doc_quality += 0.03
+                
+                # Factor 5: Texto contiene patrones MRZ (P<MEX, chevrons, etc.)
+                full_text_upper = (ocr_result.get("full_text", "") + " " + (mrz_ocr_result.get("full_text", "") if "mrz_ocr_result" in locals() else "")).upper()
+                full_text_nospace = full_text_upper.replace(' ', '')
+                
+                if 'P<MEX' in full_text_nospace or 'PMEX' in full_text_nospace:
+                    doc_quality += 0.05
+                
+                # Factor 6: MRZ ROI OCR también tuvo buena confianza
+                mrz_ocr_conf = float(mrz_ocr_result.get("ocr_avg_confidence", 0)) if "mrz_ocr_result" in locals() else 0.0
+                if mrz_ocr_conf >= 0.40:
+                    doc_quality += 0.05
+                
+                # Factor 7: Imagen de alta resolución disponible (mejor procesamiento)
+                if highres_document_image is not None:
+                    doc_quality += 0.03
+                
+                ocr_score = min(doc_quality, 0.95)
+                
+                self.logger.info(f"  Doc quality score: {ocr_score:.2f} (raw_ocr={raw_ocr_conf:.2f}, passport_num={has_passport_number}, mrz_roi={mrz_roi_found})")
                 
                 # Validación completa con detección de IA
+                # IMPORTANTE: Usar imagen ORIGINAL para detección de IA/edición,
+                # ya que el preprocesamiento altera histograma y ruido.
+                ai_detection_image = original_full_image if original_full_image is not None else processed_image
                 final_result = validator.validate(
-                    image_array=processed_image,
+                    image_array=ai_detection_image,
                     ocr_score=ocr_score,
                     mrz_score=mrz_score,
                     ocr_confidence=ocr_score,
@@ -372,14 +423,18 @@ def verify_passport(image_input: Union[str, Path, bytes],
     # Simplificar resultado para retorno
     if result.get("final_result"):
         final = result["final_result"]
+        # anomalias viene del validador; fallback a metadata_warnings
+        anomalias = final.get("anomalias") or final.get("analisis", {}).get("metadata_warnings", [])
+        # recomendacion: si no la trae el validador, generar desde estado/razon
+        recomendacion = final.get("recomendacion") or final.get("razon", "Análisis completado")
         return {
             "id": result["id"],
             "timestamp": result["timestamp"],
             "autenticidad_score": final.get("autenticidad_score"),
             "estado": final.get("estado"),
             "confianza": final.get("confianza"),
-            "anomalias": final.get("anomalias"),
-            "recomendacion": final.get("recomendacion"),
+            "anomalias": anomalias,
+            "recomendacion": recomendacion,
             "processing_time_ms": result["processing_time_ms"],
             "detalles": final.get("detalles"),
         }

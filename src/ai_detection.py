@@ -42,7 +42,10 @@ class AIDetector:
     
     def detect_from_image(self, image_array: np.ndarray) -> Dict:
         """
-        Detectar anomalías de IA/edición en imagen
+        Detectar anomalías de IA/edición en imagen.
+        
+        Usa un sistema de scoring continuo en lugar de banderas binarias
+        para reducir falsos positivos en pasaportes reales.
         
         Args:
             image_array: Array numpy de imagen (BGR)
@@ -76,30 +79,91 @@ class AIDetector:
             compression_analysis = self._analyze_compression(image_array)
             results['details']['compression'] = compression_analysis
             
-            # Compilar banderas rojas
-            if histogram_analysis['suspicious']:
-                results['red_flags'].append('Histograma sospechoso - posible edición')
-            if noise_analysis['unnatural']:
-                results['red_flags'].append('Patrón de ruido artificial - posible generación IA')
-            if lighting_analysis['inconsistent']:
+            # ====== SCORING CONTINUO ======
+            # Cada análisis aporta un score de sospecha (0.0 = limpio, 1.0 = muy sospechoso)
+            suspicion_score = 0.0
+            
+            # --- Histograma ---
+            peaks = histogram_analysis.get('suspicious_peaks', 0)
+            gap = histogram_analysis.get('gap_ratio', 0)
+            
+            # La combinación de gap_ratio bajo + peaks altos es el indicador más fuerte.
+            # Pasaportes reales: gap > 0.20 (distribución amplia).
+            # Imágenes IA/falsas: gap < 0.15 con peaks >= 27 (distribución concentrada).
+            if gap < 0.15 and peaks >= 27:
+                suspicion_score += 0.50
+                results['red_flags'].append('Histograma sospechoso - distribución artificial')
+            elif gap < 0.10 and peaks >= 25:
+                suspicion_score += 0.45
+                results['red_flags'].append('Histograma con distribución concentrada')
+            elif gap < 0.15 and peaks >= 25:
+                suspicion_score += 0.35
+                results['red_flags'].append('Histograma con anomalías moderadas')
+            elif peaks >= 20 and gap > 0.20:
+                suspicion_score += 0.05  # Peso mínimo - probablemente real con mucho detalle
+            
+            # --- Ruido / Laplacian ---
+            lap_var = noise_analysis.get('laplacian_variance', 1500)
+            
+            # IMPORTANTE: El laplacian varía enormemente según cómo se tome la foto.
+            # Una foto limpia de página sola puede tener laplacian = 30-150 y ser REAL.
+            # Por eso el laplacian SOLO no debe ser un indicador fuerte.
+            # Solo pesa fuerte cuando se COMBINA con histograma sospechoso.
+            
+            histogram_is_suspicious = (gap < 0.15 and peaks >= 25)  # Histograma apunta a IA
+            
+            if lap_var < 8:
+                # Extremadamente limpio — solo imágenes sintéticas perfectas
+                suspicion_score += 0.30 if histogram_is_suspicious else 0.10
+                if histogram_is_suspicious:
+                    results['red_flags'].append('Imagen demasiado limpia + histograma artificial')
+            elif lap_var < 350:
+                if histogram_is_suspicious:
+                    # Combo fuerte: laplacian bajo + histograma artificial = IA
+                    suspicion_score += 0.35
+                    results['red_flags'].append('Patrón de ruido artificial + histograma sospechoso')
+                else:
+                    # Solo laplacian bajo — puede ser foto limpia de página sola 
+                    suspicion_score += 0.10
+            elif lap_var < 800:
+                if histogram_is_suspicious:
+                    suspicion_score += 0.15
+                else:
+                    suspicion_score += 0.05  # Zona gris, sin histograma sospechoso = mínimo
+            elif lap_var > 4500:
+                suspicion_score += 0.20 if histogram_is_suspicious else 0.10
+                results['red_flags'].append('Ruido excesivo - posible manipulación')
+            # 800-4500 = rango normal para fotos reales, no suma sospecha
+            
+            # --- Iluminación ---
+            if lighting_analysis.get('inconsistent'):
+                suspicion_score += 0.15
                 results['red_flags'].append('Iluminación inconsistente - posible composición')
-            if compression_analysis['excessive']:
+            
+            # --- Compresión ---
+            if compression_analysis.get('excessive'):
+                suspicion_score += 0.10
                 results['red_flags'].append('Compresión excesiva - posible re-edición')
             
-            # Calcular confianza
-            red_flag_count = len(results['red_flags'])
-            if red_flag_count >= 3:
+            # ====== DECISIÓN FINAL ======
+            # Umbral continuo en vez de contar banderas
+            if suspicion_score >= 0.65:
                 results['is_ai_generated'] = True
-                results['confidence'] = 0.95
+                results['confidence'] = min(0.95, suspicion_score)
                 results['detected_method'] = 'AI_GENERATED'
-            elif red_flag_count == 2:
+            elif suspicion_score >= 0.50:
+                results['is_ai_generated'] = True
+                results['confidence'] = suspicion_score
+                results['detected_method'] = 'AI_GENERATED_LIKELY'
+            elif suspicion_score >= 0.30:
                 results['is_edited'] = True
-                results['confidence'] = 0.7
-                results['detected_method'] = 'EDITED'
-            elif red_flag_count == 1:
-                results['is_edited'] = True
-                results['confidence'] = 0.4
+                results['confidence'] = suspicion_score
                 results['detected_method'] = 'POSSIBLY_EDITED'
+            else:
+                results['confidence'] = suspicion_score
+                results['detected_method'] = 'NATURAL'
+            
+            results['details']['suspicion_score'] = round(suspicion_score, 3)
         
         except Exception as e:
             self.logger.error(f"Error en detección de IA: {str(e)}")
@@ -181,7 +245,7 @@ class AIDetector:
             suspicious_peaks = np.sum(hist > peak_threshold)
             
             return {
-                'suspicious': gap_ratio > 0.3 or suspicious_peaks > 5,
+                'suspicious': False,  # Decisión se toma en detect_from_image con scoring
                 'gap_ratio': float(gap_ratio),
                 'suspicious_peaks': int(suspicious_peaks),
                 'entropy': float(-np.sum(hist[hist > 0] * np.log2(hist[hist > 0])))
@@ -199,14 +263,27 @@ class AIDetector:
             laplacian = cv2.Laplacian(gray, cv2.CV_64F)
             laplacian_var = np.var(laplacian)
             
-            # Ruido natural: distribución más uniforme
-            # Ruido de IA: patrón repetitivo o demasiado limpio
-            unnatural = laplacian_var < 10 or laplacian_var > 1000
+            # Clasificación de rangos:
+            # < 8: demasiado limpio (artificial)
+            # 50-350: IA generativa típica
+            # 350-800: zona gris
+            # 800-3500: foto real de celular (normal)
+            # > 4500: muy ruidoso (artificial)
+            if laplacian_var < 8:
+                interpretation = 'muy_limpio'
+            elif laplacian_var < 350:
+                interpretation = 'sospechoso_ia'
+            elif laplacian_var < 800:
+                interpretation = 'zona_gris'
+            elif laplacian_var <= 4500:
+                interpretation = 'normal'
+            else:
+                interpretation = 'muy_ruidoso'
             
             return {
-                'unnatural': unnatural,
+                'unnatural': False,  # Decisión se toma en detect_from_image con scoring
                 'laplacian_variance': float(laplacian_var),
-                'interpretation': 'muy_limpio' if laplacian_var < 10 else 'muy_ruidoso' if laplacian_var > 1000 else 'normal'
+                'interpretation': interpretation
             }
         except Exception as e:
             return {'error': str(e), 'unnatural': False}

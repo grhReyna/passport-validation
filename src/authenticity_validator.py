@@ -14,6 +14,7 @@ import logging
 import numpy as np
 from typing import Dict, Tuple
 from datetime import datetime
+import config
 
 from .ai_detection import AIDetector
 
@@ -63,6 +64,7 @@ class AuthenticityValidator:
                 'ia': 0.0,
                 'final': original_confidence / 100.0
             },
+            'anomalias': [],
             'analisis': {
                 'ocr_score': float(ocr_score),
                 'mrz_score': float(mrz_score),
@@ -78,10 +80,21 @@ class AuthenticityValidator:
             
             # 2. DETERMINAR SI FUE POR IA
             if ai_analysis.get('is_ai_generated'):
+                # Poblar anomalías ANTES del early-return
+                ai_warnings = list(ai_analysis.get('red_flags', []))
+                if not ai_warnings:
+                    ai_warnings.append('Documento generado por IA detectado')
+                
+                results['analisis']['metadata_warnings'] = ai_warnings
+                results['anomalias'] = ai_warnings
                 results['estado'] = 'REJECT'
                 results['razon'] = f'❌ FALSIFICADO POR IA - Confianza: {ai_analysis.get("confidence", 0):.0%}'
                 results['metodo_deteccion'] = 'AI_GENERATED'
                 results['autenticidad_score'] = 5  # Score muy bajo
+                results['confianza']['ia'] = ai_analysis.get('confidence', 0)
+                results['confianza']['ocr'] = 0.0
+                results['confianza']['mrz'] = 0.0
+                results['confianza']['final'] = 0.05
                 return results
             
             # 3. ANÁLISIS COMBINADO DE SCORES
@@ -91,6 +104,15 @@ class AuthenticityValidator:
             ai_confidence = ai_analysis.get('confidence', 0.0)
             is_strong_edit_signal = ai_analysis.get('is_edited') and ai_confidence >= 0.75
             is_weak_edit_signal = ai_analysis.get('is_edited') and ai_confidence < 0.75
+            has_valid_mrz = bool(mrz_result and (mrz_result.get('mrz_valid') or mrz_result.get('valid')))
+
+            # Regla de negocio: pasaporte con MRZ válido no debe quedar por debajo de 85%
+            # SOLO si el detector NO marcó is_edited ni is_ai_generated.
+            # Red flags leves (score bajo) no bloquean el floor.
+            has_significant_ai_signal = ai_analysis.get('is_ai_generated') or ai_analysis.get('is_edited')
+            if has_valid_mrz and mrz_score >= 0.65 and not has_significant_ai_signal:
+                final_score = max(final_score, 0.85)
+                results['autenticidad_score'] = final_score * 100
 
             # Regla de estabilización:
             # Si MRZ es consistente pero OCR general es bajo, evitar rechazo automático.
@@ -110,6 +132,14 @@ class AuthenticityValidator:
                 results['estado'] = 'REJECT'
                 results['razon'] = f'❌ FALSIFICADO - Imagen editada + scores bajos (OCR: {ocr_score:.0%}, MRZ: {mrz_score:.0%})'
                 results['metodo_deteccion'] = 'EDITED_WITH_LOW_SCORES'
+
+            elif (is_weak_edit_signal and final_score < 0.50) or (not has_valid_mrz and final_score < 0.45):
+                results['estado'] = 'REJECT'
+                results['razon'] = (
+                    f'❌ FALSIFICADO - Evidencia técnica insuficiente para documento válido '
+                    f'(score: {final_score:.0%}, MRZ válido: {has_valid_mrz})'
+                )
+                results['metodo_deteccion'] = 'LOW_TRUST_DOCUMENT'
             
             elif is_strong_edit_signal and 0.8 <= final_score < 0.9:
                 results['estado'] = 'REVIEW'
@@ -124,12 +154,12 @@ class AuthenticityValidator:
                 )
                 results['metodo_deteccion'] = 'WEAK_EDIT_SIGNAL'
             
-            elif final_score >= 0.90:
+            elif final_score >= config.PASS_THRESHOLD:
                 results['estado'] = 'PASS'
                 results['razon'] = f'✓ AUTÉNTICO - Score de confianza: {final_score:.0%}'
                 results['metodo_deteccion'] = 'AUTHENTIC'
             
-            elif final_score >= 0.70:
+            elif final_score >= config.REVIEW_THRESHOLD:
                 results['estado'] = 'REVIEW'
                 results['razon'] = f'⚠️ REVISAR - Score intermedio: {final_score:.0%}'
                 results['metodo_deteccion'] = 'UNCERTAIN'
@@ -143,19 +173,12 @@ class AuthenticityValidator:
             for red_flag in ai_analysis.get('red_flags', []):
                 results['analisis']['metadata_warnings'].append(red_flag)
             
-            # 6. AGREGAR ANOMALÍAS TÉCNICAS
-            if ai_analysis.get('details', {}).get('histogram', {}).get('suspicious'):
-                results['analisis']['metadata_warnings'].append('Anomalía en histograma')
-            
-            if ai_analysis.get('details', {}).get('noise', {}).get('unnatural'):
-                results['analisis']['metadata_warnings'].append('Patrón de ruido artificial')
-            
-            if ai_analysis.get('details', {}).get('lighting', {}).get('inconsistent'):
-                results['analisis']['metadata_warnings'].append('Iluminación inconsistente')
-            
-            # 7. VALIDACIONES ADICIONALES DE PASAPORTE MEXICANO
+            # 6. VALIDACIONES ADICIONALES DE PASAPORTE MEXICANO
             if mrz_result and not mrz_result.get('valid'):
                 results['analisis']['metadata_warnings'].append('MRZ inválido o mal leído')
+            
+            # Sincronizar anomalías con metadata_warnings
+            results['anomalias'] = list(results['analisis']['metadata_warnings'])
             
             # Confianza en detección de IA
             results['confianza']['ia'] = ai_analysis.get('confidence', 0)
