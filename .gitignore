@@ -140,6 +140,7 @@ data/results/*
 models/*
 !data/.gitkeep
 !models/.gitkeep
+!models/trocr-finetuned/
 
 # Archivos temporales
 *.tmp

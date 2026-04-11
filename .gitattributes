@@ -1,0 +1,1 @@
+models/trocr-finetuned/* filter=lfs diff=lfs merge=lfs -text
