@@ -141,6 +141,15 @@ models/*
 !data/.gitkeep
 !models/.gitkeep
 !models/trocr-finetuned/
+# Ignorar archivos grandes del modelo (>100MB) - se cargan con Git LFS
+!models/trocr-finetuned/*.json
+!models/trocr-finetuned/*.txt
+!models/trocr-finetuned/tokenizer.json
+!models/trocr-finetuned/vocab.json
+!models/trocr-finetuned/merges.txt
+models/trocr-finetuned/*.safetensors
+models/trocr-finetuned/*.bin
+models/trocr-finetuned/*.pt
 
 # Archivos temporales
 *.tmp
