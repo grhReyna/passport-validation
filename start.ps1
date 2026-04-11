@@ -15,7 +15,7 @@ param(
     [switch]$SkipInstall
 )
 
-$ErrorActionPreference = "Stop"
+$ErrorActionPreference = "Continue"
 $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ProjectRoot
 
@@ -52,7 +52,28 @@ $venvPath = Join-Path $ProjectRoot ".venv"
 $venvPython = Join-Path $venvPath "Scripts\python.exe"
 $venvPip = Join-Path $venvPath "Scripts\pip.exe"
 
-if (-not (Test-Path $venvPython)) {
+# Si el venv ya existe, verificar que sea válido
+if (Test-Path $venvPython) {
+    Write-Host "  Entorno virtual ya existe" -ForegroundColor Gray
+    try {
+        & $venvPython --version >$null 2>&1
+        if ($LASTEXITCODE -eq 0) {
+            Write-Host "  OK: Entorno virtual válido" -ForegroundColor Green
+        } else {
+            throw "Entorno virtual corrupto"
+        }
+    } catch {
+        Write-Host "  ⚠️ Entorno virtual dañado, recreando..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $venvPath -ErrorAction SilentlyContinue
+        Start-Sleep 1
+        & $pythonCmd -m venv .venv
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ERROR: No se pudo crear el entorno virtual." -ForegroundColor Red
+            exit 1
+        }
+        Write-Host "  OK: Entorno virtual recreado" -ForegroundColor Green
+    }
+} else {
     Write-Host "  Creando .venv..." -ForegroundColor Gray
     & $pythonCmd -m venv .venv
     if ($LASTEXITCODE -ne 0) {
@@ -60,23 +81,48 @@ if (-not (Test-Path $venvPython)) {
         exit 1
     }
     Write-Host "  OK: Entorno virtual creado" -ForegroundColor Green
-} else {
-    Write-Host "  OK: Entorno virtual ya existe" -ForegroundColor Green
 }
 
 # --- 3. Instalar dependencias ---
 if (-not $SkipInstall) {
     Write-Host "[3/5] Instalando dependencias (esto puede tardar unos minutos)..." -ForegroundColor Yellow
-    & $venvPip install --upgrade pip --quiet 2>&1 | Out-Null
-    & $venvPip install -r requirements.txt --quiet 2>&1
+    
+    # Verificar si pip está funcionando correctamente
+    $pipCheck = & $venvPython -m pip --version 2>&1
     if ($LASTEXITCODE -ne 0) {
-        Write-Host "  ADVERTENCIA: Algunas dependencias fallaron. Intentando instalar las esenciales..." -ForegroundColor DarkYellow
-        $essentials = @("torch", "torchvision", "transformers", "opencv-python", "pillow", "numpy", "fastapi", "uvicorn", "python-multipart", "pydantic", "scikit-image", "scipy")
-        foreach ($pkg in $essentials) {
-            & $venvPip install $pkg --quiet 2>&1 | Out-Null
-        }
+        Write-Host "  ⚠️ Error en pip, recreando entorno virtual..." -ForegroundColor Yellow
+        Remove-Item -Recurse -Force $venvPath -ErrorAction SilentlyContinue
+        Start-Sleep 1
+        & $pythonCmd -m venv .venv
     }
-    Write-Host "  OK: Dependencias instaladas" -ForegroundColor Green
+    
+    # Actualizar pip
+    & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
+    
+    # Verificar si requirements.txt existe
+    if (Test-Path "requirements.txt") {
+        # Instalar dependencias (pip se encarga de verificar si ya están)
+        & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ⚠️ Error instalando dependencias, recreando..." -ForegroundColor Yellow
+            Remove-Item -Recurse -Force $venvPath -ErrorAction SilentlyContinue
+            Start-Sleep 1
+            
+            & $pythonCmd -m venv .venv
+            & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
+            & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
+            
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "  ERROR: No se pudieron instalar las dependencias." -ForegroundColor Red
+                Write-Host "  Revisa tu conexión a internet y requirements.txt" -ForegroundColor Red
+                exit 1
+            }
+        }
+    } else {
+        Write-Host "  ⚠️ requirements.txt no encontrado" -ForegroundColor Yellow
+    }
+    
+    Write-Host "  OK: Dependencias listas" -ForegroundColor Green
 } else {
     Write-Host "[3/5] Saltando instalacion (--SkipInstall)" -ForegroundColor Gray
 }
@@ -114,4 +160,24 @@ Write-Host "  Presiona Ctrl+C para detener" -ForegroundColor Green
 Write-Host "================================================" -ForegroundColor Green
 Write-Host ""
 
-& $venvPython -m uvicorn app:app --host 127.0.0.1 --port $Port
+try {
+    & $venvPython -m uvicorn app:app --host 127.0.0.1 --port $Port
+} catch {
+    Write-Host ""
+    Write-Host "❌ ERROR: No se pudo iniciar el servidor" -ForegroundColor Red
+    Write-Host "Error: $_" -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Intentando limpiar y reinstalar..." -ForegroundColor Yellow
+    
+    Remove-Item -Recurse -Force $venvPath -ErrorAction SilentlyContinue
+    Start-Sleep 1
+    
+    Write-Host "Recreando entorno virtual..." -ForegroundColor Gray
+    & $pythonCmd -m venv .venv
+    & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
+    & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
+    
+    Write-Host "Reiniciando servidor..." -ForegroundColor Gray
+    Write-Host ""
+    & $venvPython -m uvicorn app:app --host 127.0.0.1 --port $Port
+}

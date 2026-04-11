@@ -845,7 +845,10 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        window.addEventListener('unload', stopCamera);
+        // Detener cámara cuando el tab se vuelve invisible
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden && stream) stopCamera();
+        });
     </script>
 </body>
 </html>

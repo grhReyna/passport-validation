@@ -47,12 +47,20 @@ fi
 
 # --- 2. Crear entorno virtual ---
 echo "[2/5] Configurando entorno virtual..."
-if [ ! -f ".venv/bin/python" ]; then
+if [ -f ".venv/bin/python" ]; then
+    echo "  Entorno virtual ya existe"
+    if .venv/bin/python --version >/dev/null 2>&1; then
+        echo "  OK: Entorno virtual válido"
+    else
+        echo "  ⚠️ Entorno virtual dañado, recreando..."
+        rm -rf .venv
+        $PYTHON_CMD -m venv .venv
+        echo "  OK: Entorno virtual recreado"
+    fi
+else
     echo "  Creando .venv..."
     $PYTHON_CMD -m venv .venv
     echo "  OK: Entorno virtual creado"
-else
-    echo "  OK: Entorno virtual ya existe"
 fi
 
 VENV_PYTHON=".venv/bin/python"
@@ -61,14 +69,41 @@ VENV_PIP=".venv/bin/pip"
 # --- 3. Instalar dependencias ---
 if [ "$SKIP_INSTALL" = false ]; then
     echo "[3/5] Instalando dependencias (esto puede tardar unos minutos)..."
-    $VENV_PIP install --upgrade pip --quiet 2>&1 || true
-    $VENV_PIP install -r requirements.txt --quiet 2>&1 || {
-        echo "  ADVERTENCIA: Algunas dependencias fallaron. Instalando esenciales..."
-        for pkg in torch torchvision transformers opencv-python pillow numpy fastapi uvicorn python-multipart pydantic scikit-image scipy; do
-            $VENV_PIP install "$pkg" --quiet 2>&1 || true
-        done
-    }
-    echo "  OK: Dependencias instaladas"
+    
+    # Verificar si pip está funcionando correctamente
+    if ! $VENV_PYTHON -m pip --version >/dev/null 2>&1; then
+        echo "  ⚠️ Error en pip, recreando entorno virtual..."
+        rm -rf .venv
+        sleep 1
+        $PYTHON_CMD -m venv .venv
+    fi
+    
+    # Actualizar pip
+    $VENV_PYTHON -m pip install --upgrade pip --quiet >/dev/null 2>&1
+    
+    # Verificar si requirements.txt existe e instalar dependencias
+    if [ -f "requirements.txt" ]; then
+        # Instalar dependencias (pip se encarga de verificar si ya están)
+        if ! $VENV_PYTHON -m pip install -r requirements.txt --quiet >/dev/null 2>&1; then
+            echo "  ⚠️ Error instalando dependencias, recreando..."
+            rm -rf .venv
+            sleep 1
+            
+            $PYTHON_CMD -m venv .venv
+            $VENV_PYTHON -m pip install --upgrade pip --quiet >/dev/null 2>&1
+            $VENV_PYTHON -m pip install -r requirements.txt --quiet >/dev/null 2>&1
+            
+            if [ $? -ne 0 ]; then
+                echo "  ❌ ERROR: No se pudieron instalar las dependencias."
+                echo "  Revisa tu conexión a internet y requirements.txt"
+                exit 1
+            fi
+        fi
+    else
+        echo "  ⚠️ requirements.txt no encontrado"
+    fi
+    
+    echo "  OK: Dependencias listas"
 else
     echo "[3/5] Saltando instalacion (--skip-install)"
 fi
@@ -87,4 +122,21 @@ echo "  Presiona Ctrl+C para detener"
 echo "================================================"
 echo ""
 
-exec $VENV_PYTHON -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+# Iniciar servidor con manejo de errores
+if ! exec $VENV_PYTHON -m uvicorn app:app --host 127.0.0.1 --port "$PORT"; then
+    echo ""
+    echo "❌ ERROR: No se pudo iniciar el servidor"
+    echo ""
+    echo "Intentando limpiar y reinstalar..."
+    rm -rf .venv
+    sleep 1
+    
+    echo "Recreando entorno virtual..."
+    $PYTHON_CMD -m venv .venv
+    $VENV_PYTHON -m pip install --upgrade pip --quiet 2>&1 || true
+    $VENV_PYTHON -m pip install -r requirements.txt --quiet 2>&1 || true
+    
+    echo "Reiniciando servidor..."
+    echo ""
+    exec $VENV_PYTHON -m uvicorn app:app --host 127.0.0.1 --port "$PORT"
+fi
