@@ -310,9 +310,22 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
                 logger.warning(f"No se pudo cargar modelo local: {e}")
         
         if not loaded:
-            # Fallback al modelo base de HuggingFace
+            # Fallback al modelo finetuned en HuggingFace Hub
+            hf_model = getattr(config, 'TROCR_HF_MODEL', None)
+            if hf_model:
+                try:
+                    logger.info(f"Cargando modelo finetuned desde HuggingFace Hub: {hf_model}")
+                    processor = TrOCRProcessor.from_pretrained(hf_model)
+                    model = VisionEncoderDecoderModel.from_pretrained(hf_model)
+                    loaded = True
+                    logger.info("✓ Modelo finetuned de HuggingFace Hub cargado exitosamente")
+                except Exception as e:
+                    logger.warning(f"No se pudo cargar modelo de HuggingFace Hub: {e}")
+        
+        if not loaded:
+            # Fallback final al modelo base de HuggingFace
             fallback = getattr(config, 'TROCR_BASE_MODEL', model_name)
-            logger.info(f"Cargando modelo TrOCR: {fallback}")
+            logger.info(f"Cargando modelo TrOCR base: {fallback}")
             processor = TrOCRProcessor.from_pretrained(fallback)
             model = VisionEncoderDecoderModel.from_pretrained(fallback)
             logger.info("✓ Modelo TrOCR base cargado exitosamente")

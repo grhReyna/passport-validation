@@ -48,8 +48,9 @@ DENOISE_SEARCH_WINDOW = 21
 # ============================================================================
 
 # Modelo TrOCR finetuned para pasaportes mexicanos
-# Se usa el modelo local entrenado; fallback al base de HuggingFace si no existe
+# Primero intenta modelo local, luego HuggingFace Hub, y fallback al base
 TROCR_MODEL_NAME = "models/trocr-finetuned"
+TROCR_HF_MODEL = "grhReyna/trocr-passport-mx"
 TROCR_BASE_MODEL = "microsoft/trocr-base-printed"
 
 # Umbral de confianza para tokens OCR
