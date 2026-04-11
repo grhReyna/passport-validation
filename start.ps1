@@ -67,8 +67,15 @@ if (-not (Test-Path $venvPython)) {
 # --- 3. Instalar dependencias ---
 if (-not $SkipInstall) {
     Write-Host "[3/5] Instalando dependencias (esto puede tardar unos minutos)..." -ForegroundColor Yellow
-    & $venvPython -m pip install --upgrade pip --quiet 2>&1 | Out-Null
-    & $venvPython -m pip install -r requirements.txt --quiet 2>&1 | Out-Null
+    & $venvPip install --upgrade pip --quiet 2>&1 | Out-Null
+    & $venvPip install -r requirements.txt --quiet 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  ADVERTENCIA: Algunas dependencias fallaron. Intentando instalar las esenciales..." -ForegroundColor DarkYellow
+        $essentials = @("torch", "torchvision", "transformers", "opencv-python", "pillow", "numpy", "fastapi", "uvicorn", "python-multipart", "pydantic", "scikit-image", "scipy")
+        foreach ($pkg in $essentials) {
+            & $venvPip install $pkg --quiet 2>&1 | Out-Null
+        }
+    }
     Write-Host "  OK: Dependencias instaladas" -ForegroundColor Green
 } else {
     Write-Host "[3/5] Saltando instalacion (--SkipInstall)" -ForegroundColor Gray
