@@ -81,6 +81,25 @@ if [ "$SKIP_INSTALL" = false ]; then
     # Actualizar pip
     $VENV_PYTHON -m pip install --upgrade pip --quiet >/dev/null 2>&1
     
+    # Detectar GPU e instalar PyTorch correcto
+    echo "  Detectando GPU..."
+    if GPU_INFO=$($VENV_PYTHON detect_gpu.py 2>/dev/null); then
+        HAS_GPU=$(echo "$GPU_INFO" | grep -o '"has_gpu": true' | wc -l)
+        if [ "$HAS_GPU" -gt 0 ]; then
+            CUDA_VER=$(echo "$GPU_INFO" | grep -o '"cuda_version": "[^"]*"' | cut -d'"' -f4)
+            echo "  ✓ GPU NVIDIA detectada (CUDA: $CUDA_VER)"
+            echo "  Instalando PyTorch con soporte GPU..."
+            PYTORCH_CMD=$(echo "$GPU_INFO" | grep -o '"pytorch_install_cmd": "[^"]*"' | cut -d'"' -f4)
+            $VENV_PYTHON -m pip install $PYTORCH_CMD --quiet >/dev/null 2>&1
+        else
+            echo "  GPU no disponible, usando CPU"
+            $VENV_PYTHON -m pip install torch==2.0.0 torchvision==0.15.0 --quiet >/dev/null 2>&1
+        fi
+    else
+        echo "  ⚠️ Error detectando GPU, usando configuración por defecto..."
+        $VENV_PYTHON -m pip install torch==2.0.0 torchvision==0.15.0 --quiet >/dev/null 2>&1
+    fi
+    
     # Verificar si requirements.txt existe e instalar dependencias
     if [ -f "requirements.txt" ]; then
         # Instalar dependencias (pip se encarga de verificar si ya están)

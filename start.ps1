@@ -99,7 +99,24 @@ if (-not $SkipInstall) {
     # Actualizar pip
     & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
     
-    # Verificar si requirements.txt existe
+    # Detectar GPU e instalar PyTorch correcto
+    Write-Host "  Detectando GPU..." -ForegroundColor Gray
+    try {
+        $gpuJson = & $venvPython detect_gpu.py 2>$null | ConvertFrom-Json
+        if ($gpuJson.has_gpu) {
+            Write-Host "  ✓ GPU NVIDIA detectada (CUDA: $($gpuJson.cuda_version))" -ForegroundColor Green
+            Write-Host "  Instalando PyTorch con soporte GPU..." -ForegroundColor Gray
+            & $venvPython -m pip install $($gpuJson.pytorch_install_cmd.Split(" ")) --quiet >$null 2>&1
+        } else {
+            Write-Host "  GPU no disponible, usando CPU" -ForegroundColor Yellow
+            & $venvPython -m pip install torch==2.0.0 torchvision==0.15.0 --quiet >$null 2>&1
+        }
+    } catch {
+        Write-Host "  ⚠️ Error detectando GPU, usando configuración por defecto..." -ForegroundColor Yellow
+        & $venvPython -m pip install torch==2.0.0 torchvision==0.15.0 --quiet >$null 2>&1
+    }
+    
+    # Verificar si requirements.txt existe e instalar resto de dependencias
     if (Test-Path "requirements.txt") {
         # Instalar dependencias (pip se encarga de verificar si ya están)
         & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
