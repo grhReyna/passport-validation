@@ -141,15 +141,23 @@ class AIDetector:
             
             if lap_var < 8:
                 # Extremadamente limpio — solo imágenes sintéticas perfectas
-                suspicion_score += 0.30 if histogram_is_suspicious else 0.10
+                suspicion_score += 0.30 if histogram_is_suspicious else 0.15
                 if histogram_is_suspicious:
                     results['red_flags'].append('Imagen demasiado limpia + histograma artificial')
-            elif lap_var < 350:
+                else:
+                    results['red_flags'].append('Imagen extremadamente limpia - posible sintética')
+            elif lap_var < 100:
                 if histogram_is_suspicious:
-                    # Combo fuerte: laplacian bajo + histograma artificial = IA
                     suspicion_score += 0.35
                     results['red_flags'].append('Patrón de ruido artificial + histograma sospechoso')
-                # Sin histograma sospechoso, laplacian bajo solo = foto limpia, NO suma
+                else:
+                    # Laplacian muy bajo sin histograma: señal moderada (fotos reales > 130)
+                    suspicion_score += 0.10
+            elif lap_var < 350:
+                if histogram_is_suspicious:
+                    suspicion_score += 0.30
+                    results['red_flags'].append('Ruido bajo + histograma sospechoso')
+                # Sin histograma sospechoso, 100-350 es ambiguo, NO suma
             elif lap_var < 800:
                 if histogram_is_suspicious:
                     suspicion_score += 0.15
@@ -181,35 +189,47 @@ class AIDetector:
                                frequency_analysis.get('suspicious', False) or
                                color_analysis.get('suspicious', False))
             
+            # Contar señales independientes para corroboración cruzada
+            # (cada análisis que detecte algo sospechoso cuenta como 1)
+            independent_signals = sum([
+                histogram_is_suspicious,
+                face_analysis.get('suspicious', False),
+                frequency_analysis.get('suspicious', False),
+                color_analysis.get('suspicious', False),
+                lap_var < 100,  # laplacian muy bajo
+            ])
+            has_corroboration = independent_signals >= 1
+            
             # NOTA CLAVE: Documentos impresos/escaneados (pasaportes) tienen ELA
             # naturalmente muy uniforme (0.85-0.95) porque son superficies planas.
             # ELA solo NO es indicador confiable para documentos. Requiere corroboración.
-            if ela_uniformity > 0.92 and has_other_signal:
-                # Extremadamente uniforme + otra señal fuerte = probable IA
+            if ela_uniformity > 0.92 and has_corroboration:
                 suspicion_score += 0.30
                 results['red_flags'].append('ELA: niveles de error extremadamente uniformes + anomalías corroborativas')
             elif ela_uniformity > 0.92:
                 # Solo ELA alto, sin corroboración = puede ser documento real escaneado
                 suspicion_score += 0.05
-            elif ela_uniformity > 0.88 and has_other_signal:
+            elif ela_uniformity > 0.88 and has_corroboration:
                 suspicion_score += 0.20
                 results['red_flags'].append('ELA: niveles de error muy uniformes + otras anomalías')
-            # Por debajo de 0.92 sin corroboración = normal para documentos impresos
+            # Por debajo de 0.88 sin corroboración = normal para documentos impresos
             
             # --- Textura facial ---
-            # NOTA: Fotos de pasaporte son tomadas en estudio con iluminación uniforme,
-            # lo que produce rostros naturalmente suaves. Solo considerar sospechoso
-            # con smoothness alto (>0.70) ya que fotos reales de estudio llegan a 0.55-0.65.
+            # Reales de estudio: smoothness 0.0-0.45 (nunca pasan 0.50)
+            # IA genera rostros con smoothness > 0.55 frecuentemente
             face_suspicious = face_analysis.get('suspicious', False)
             face_smoothness = face_analysis.get('smoothness_score', 0.0)
             if face_suspicious:
                 if face_smoothness > 0.85:
-                    suspicion_score += 0.35
+                    suspicion_score += 0.40
                     results['red_flags'].append('Rostro con textura artificial - probable IA')
                 elif face_smoothness > 0.70:
-                    suspicion_score += 0.15
+                    suspicion_score += 0.25
                     results['red_flags'].append('Rostro demasiado suave - posible IA')
-                # smoothness 0.55-0.70 = normal para fotos de estudio, NO suma
+                elif face_smoothness > 0.55:
+                    # Señal leve pero contribuye a corroboración cruzada
+                    suspicion_score += 0.15
+                    results['red_flags'].append('Rostro suave - posible edición')
             
             # --- Frecuencia ---
             freq_suspicious = frequency_analysis.get('suspicious', False)
@@ -242,7 +262,7 @@ class AIDetector:
                 results['is_ai_generated'] = True
                 results['confidence'] = suspicion_score
                 results['detected_method'] = 'AI_GENERATED_LIKELY'
-            elif suspicion_score >= 0.40:
+            elif suspicion_score >= 0.35:
                 results['is_edited'] = True
                 results['confidence'] = suspicion_score
                 results['detected_method'] = 'POSSIBLY_EDITED'
