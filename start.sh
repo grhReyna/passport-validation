@@ -117,6 +117,8 @@ if [ "$SKIP_INSTALL" = false ]; then
         if [ "$TORCH_CUDA" != "True" ]; then
             echo "  Reinstalando PyTorch con soporte CUDA (GPU)..."
             if $VENV_PYTHON -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >/dev/null 2>&1; then
+                # Corregir numpy (torch puede arrastrar numpy 2.x incompatible)
+                $VENV_PYTHON -m pip install "numpy>=1.24.3,<2.0" --quiet >/dev/null 2>&1
                 VERIFY=$($VENV_PYTHON -c "import torch; print(torch.cuda.is_available())" 2>/dev/null)
                 if [ "$VERIFY" = "True" ]; then
                     echo "  OK: PyTorch CUDA verificado"

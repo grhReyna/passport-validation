@@ -137,6 +137,8 @@ if (-not $SkipInstall) {
         if ($torchCuda -ne "True") {
             Write-Host "  Reinstalando PyTorch con soporte CUDA (GPU)..." -ForegroundColor Yellow
             & $venvPython -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >$null 2>&1
+            # Corregir numpy (torch puede arrastrar numpy 2.x incompatible)
+            & $venvPython -m pip install "numpy>=1.24.3,<2.0" --quiet >$null 2>&1
             if ($LASTEXITCODE -eq 0) {
                 $verify = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
                 if ($verify -eq "True") {
