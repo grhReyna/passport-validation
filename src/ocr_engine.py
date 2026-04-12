@@ -326,58 +326,44 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
                 logger.warning(f"No se pudo cargar modelo local: {e}")
         
         if not loaded:
-            # Fallback al modelo finetuned en HuggingFace Hub
+            # Fallback: descargar modelo finetuned de HuggingFace Hub AL directorio local
+            # Esto asegura que siempre se cargue desde local (que funciona correctamente)
             hf_model = getattr(config, 'TROCR_HF_MODEL', None)
             if hf_model:
                 try:
-                    from huggingface_hub import model_info, hf_hub_download, list_repo_files
+                    from huggingface_hub import snapshot_download
                     import time
                     
-                    # Verificar si el modelo ya está en caché local
-                    from huggingface_hub import try_to_load_from_cache
-                    cached = try_to_load_from_cache(hf_model, "model.safetensors")
-                    
-                    if cached is not None and isinstance(cached, str):
-                        logger.info(f"📦 Modelo encontrado en caché local, cargando sin descarga...")
-                        _update_status("loading", "Modelo en caché, cargando...")
-                    else:
-                        logger.info(f"⬇️  Descargando modelo desde HuggingFace Hub: {hf_model}")
-                        logger.info(f"   Esto puede tardar unos minutos la primera vez (~1.3 GB)...")
-                        _update_status("downloading", "Iniciando descarga del modelo...", 0, 0)
-                        
-                        # Descargar archivos con progreso manual
-                        files = list_repo_files(hf_model)
-                        total_files = len(files)
-                        for idx, filename in enumerate(files, 1):
-                            size_label = " (archivo principal ~1.3 GB)" if "safetensors" in filename else ""
-                            logger.info(f"   [{idx}/{total_files}] Descargando {filename}{size_label}...")
-                            _update_status("downloading", f"Descargando {filename}", idx, total_files)
-                            hf_hub_download(hf_model, filename)
-                        logger.info(f"   ✅ Descarga completa. Cargando modelo en memoria...")
-                        _update_status("loading", "Descarga completa, cargando en memoria...")
+                    logger.info(f"⬇️  Descargando modelo desde HuggingFace Hub: {hf_model}")
+                    logger.info(f"   Se guardará en: {local_model_path}")
+                    logger.info(f"   Esto puede tardar unos minutos la primera vez (~1.3 GB)...")
+                    _update_status("downloading", "Descargando modelo desde HuggingFace Hub...", 0, 0)
                     
                     start_time = time.time()
-                    logger.info(f"🔄 Cargando processor...")
-                    _update_status("loading", "Cargando processor...")
-                    processor = TrOCRProcessor.from_pretrained(hf_model)
-                    logger.info(f"🔄 Cargando modelo en memoria (esto toma ~10-30s)...")
-                    _update_status("loading", "Cargando modelo en memoria...")
-                    model = VisionEncoderDecoderModel.from_pretrained(hf_model)
-                    elapsed = time.time() - start_time
-                    loaded = True
-                    logger.info(f"✅ Modelo finetuned de HuggingFace Hub cargado en {elapsed:.1f}s")
-                    _update_status("ready", f"Modelo cargado en {elapsed:.1f}s")
-                except ImportError:
-                    logger.warning("huggingface_hub no instalado, intentando carga directa...")
-                    try:
-                        processor = TrOCRProcessor.from_pretrained(hf_model)
-                        model = VisionEncoderDecoderModel.from_pretrained(hf_model)
+                    local_model_path.mkdir(parents=True, exist_ok=True)
+                    snapshot_download(
+                        repo_id=hf_model,
+                        local_dir=str(local_model_path),
+                    )
+                    elapsed_dl = time.time() - start_time
+                    logger.info(f"   ✅ Descarga completa en {elapsed_dl:.0f}s")
+                    
+                    # Verificar que se descargó correctamente
+                    if local_model_file.exists() and local_model_file.stat().st_size > 1_000_000:
+                        _update_status("loading", "Cargando modelo descargado...")
+                        logger.info(f"🔄 Cargando modelo desde directorio local...")
+                        processor = TrOCRProcessor.from_pretrained(str(local_model_path))
+                        model = VisionEncoderDecoderModel.from_pretrained(str(local_model_path))
                         loaded = True
-                        logger.info("✓ Modelo finetuned de HuggingFace Hub cargado exitosamente")
-                    except Exception as e:
-                        logger.warning(f"No se pudo cargar modelo de HuggingFace Hub: {e}")
+                        total_elapsed = time.time() - start_time
+                        logger.info(f"✅ Modelo finetuned descargado y cargado en {total_elapsed:.1f}s")
+                        _update_status("ready", f"Modelo cargado en {total_elapsed:.1f}s")
+                    else:
+                        logger.warning("Descarga fallida: model.safetensors no válido")
+                except ImportError:
+                    logger.warning("huggingface_hub no instalado — no se puede descargar modelo")
                 except Exception as e:
-                    logger.warning(f"No se pudo cargar modelo de HuggingFace Hub: {e}")
+                    logger.warning(f"No se pudo descargar modelo de HuggingFace Hub: {e}")
         
         if not loaded:
             # Fallback final al modelo base de HuggingFace
