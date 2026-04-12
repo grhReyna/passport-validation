@@ -63,6 +63,33 @@ logger = logging.getLogger(__name__)
 from src.pipeline import verify_passport
 
 # ============================================================================
+# PRE-CARGA DEL MODELO EN BACKGROUND
+# ============================================================================
+
+import threading
+
+_model_status = {"status": "not_loaded", "step": "", "progress": 0, "total": 0}
+_model_ready = threading.Event()
+
+def _preload_model():
+    """Descarga/carga el modelo al iniciar el servidor en un hilo de fondo"""
+    try:
+        from src.ocr_engine import load_trocr_model
+        logger.info("🚀 Iniciando pre-carga del modelo en background...")
+        load_trocr_model()
+        _model_ready.set()
+        logger.info("✅ Modelo listo para procesar solicitudes")
+    except Exception as e:
+        _model_status["status"] = "error"
+        _model_status["step"] = str(e)
+        _model_ready.set()  # Liberar para que no se quede esperando
+        logger.error(f"❌ Error pre-cargando modelo: {e}")
+
+# Iniciar pre-carga al arrancar
+_preload_thread = threading.Thread(target=_preload_model, daemon=True)
+_preload_thread.start()
+
+# ============================================================================
 # ENDPOINTS
 # ============================================================================
 
@@ -97,8 +124,7 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
-# Estado global del modelo
-_model_status = {"status": "not_loaded", "step": "", "progress": 0, "total": 0}
+# Estado del modelo expuesto via endpoint
 
 @app.get("/model-status", tags=["Sistema"])
 async def model_status():
@@ -156,6 +182,12 @@ async def verify_passport_endpoint(file: UploadFile = File(...)):
         
         # Procesar imagen con pipeline real
         logger.info(f"Procesando imagen: {file.filename} ({len(contents) / 1024:.1f}KB)")
+        
+        # Esperar a que el modelo esté listo (máximo 10 minutos para primera descarga)
+        if not _model_ready.is_set():
+            logger.info("Esperando a que el modelo termine de cargarse...")
+            _model_ready.wait(timeout=600)
+        
         result = verify_passport(contents, verbose=False)
         
         # Validar que hubo resultado
