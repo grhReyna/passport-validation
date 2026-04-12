@@ -7,9 +7,14 @@ Valida:
 3. Artefactos de compresión JPEG
 4. Inconsistencias de iluminación
 5. Detección de deepfakes
+6. ELA (Error Level Analysis) - detecta regiones manipuladas/generadas
+7. Análisis de textura facial - detecta caras IA demasiado perfectas
+8. Análisis de frecuencia - detecta patrones de generadores IA
+9. Correlación de canales de color - detecta anomalías en RGB
 """
 
 import logging
+import io
 from pathlib import Path
 from PIL import Image
 from PIL.ExifTags import TAGS
@@ -79,6 +84,22 @@ class AIDetector:
             compression_analysis = self._analyze_compression(image_array)
             results['details']['compression'] = compression_analysis
             
+            # Análisis 5: ELA (Error Level Analysis)
+            ela_analysis = self._analyze_ela(image_array)
+            results['details']['ela'] = ela_analysis
+            
+            # Análisis 6: Textura facial (caras IA demasiado perfectas)
+            face_analysis = self._analyze_face_texture(image_array)
+            results['details']['face'] = face_analysis
+            
+            # Análisis 7: Frecuencia (patrones de generadores IA)
+            frequency_analysis = self._analyze_frequency(image_array)
+            results['details']['frequency'] = frequency_analysis
+            
+            # Análisis 8: Correlación de canales de color
+            color_analysis = self._analyze_color_channels(image_array)
+            results['details']['color'] = color_analysis
+            
             # ====== SCORING CONTINUO ======
             # Cada análisis aporta un score de sospecha (0.0 = limpio, 1.0 = muy sospechoso)
             suspicion_score = 0.0
@@ -144,6 +165,56 @@ class AIDetector:
             if compression_analysis.get('excessive'):
                 suspicion_score += 0.10
                 results['red_flags'].append('Compresión excesiva - posible re-edición')
+            
+            # --- ELA (Error Level Analysis) ---
+            # NOTA: Documentos impresos (pasaportes) tienen ELA naturalmente uniforme
+            # porque son superficies planas con impresión consistente.
+            # Solo es fuerte indicador en combinación con otros análisis.
+            ela_uniformity = ela_analysis.get('uniformity', 0.0)
+            
+            # Solo activar ELA si hay señales corroborativas
+            has_face_signal = face_analysis.get('suspicious', False)
+            has_other_signal = (histogram_is_suspicious or 
+                               frequency_analysis.get('suspicious', False) or
+                               color_analysis.get('suspicious', False))
+            
+            if ela_uniformity > 0.92:
+                # Extremadamente uniforme - fuerte señal incluso solo
+                suspicion_score += 0.35
+                results['red_flags'].append('ELA: niveles de error extremadamente uniformes - probable IA')
+            elif ela_uniformity > 0.88 and (has_face_signal or has_other_signal):
+                suspicion_score += 0.25
+                results['red_flags'].append('ELA: niveles de error muy uniformes + otras anomalías')
+            elif ela_uniformity > 0.88:
+                # Alto pero sin corroboración - peso bajo (puede ser documento real plano)
+                suspicion_score += 0.10
+            # Por debajo de 0.88 no suma para documentos (rango normal para material impreso)
+            
+            # --- Textura facial ---
+            face_suspicious = face_analysis.get('suspicious', False)
+            face_smoothness = face_analysis.get('smoothness_score', 0.0)
+            if face_suspicious:
+                if face_smoothness > 0.85:
+                    suspicion_score += 0.35
+                    results['red_flags'].append('Rostro con textura artificial - probable IA')
+                elif face_smoothness > 0.70:
+                    suspicion_score += 0.20
+                    results['red_flags'].append('Rostro demasiado suave - posible IA')
+                elif face_smoothness > 0.55:
+                    suspicion_score += 0.10
+                    results['red_flags'].append('Anomalías en textura de rostro')
+            
+            # --- Frecuencia ---
+            freq_suspicious = frequency_analysis.get('suspicious', False)
+            if freq_suspicious:
+                suspicion_score += 0.20
+                results['red_flags'].append('Patrones de frecuencia anómalos - posible generación IA')
+            
+            # --- Color ---
+            color_suspicious = color_analysis.get('suspicious', False)
+            if color_suspicious:
+                suspicion_score += 0.15
+                results['red_flags'].append('Correlación de canales de color anómala')
             
             # ====== DECISIÓN FINAL ======
             # Umbral continuo en vez de contar banderas
@@ -338,6 +409,287 @@ class AIDetector:
             }
         except Exception as e:
             return {'error': str(e), 'excessive': False}
+    
+    def _analyze_ela(self, image: np.ndarray) -> Dict:
+        """
+        Error Level Analysis (ELA).
+        
+        Re-comprime la imagen a un nivel JPEG conocido y compara con el original.
+        Imágenes reales muestran niveles de error variados (bordes vs áreas planas).
+        Imágenes IA muestran niveles de error uniformes en toda la imagen.
+        """
+        try:
+            # Convertir BGR a RGB para PIL
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            pil_image = Image.fromarray(rgb)
+            
+            # Re-comprimir a JPEG calidad 90
+            buffer = io.BytesIO()
+            pil_image.save(buffer, format='JPEG', quality=90)
+            buffer.seek(0)
+            recompressed = Image.open(buffer)
+            
+            # Calcular diferencia (ELA)
+            original_arr = np.array(pil_image, dtype=np.float64)
+            recompressed_arr = np.array(recompressed, dtype=np.float64)
+            ela_diff = np.abs(original_arr - recompressed_arr)
+            
+            # Amplificar diferencias para análisis
+            ela_amplified = ela_diff * 10.0
+            ela_gray = np.mean(ela_amplified, axis=2) if len(ela_amplified.shape) == 3 else ela_amplified
+            
+            # Dividir en bloques y medir varianza entre ellos
+            h, w = ela_gray.shape
+            block_size = max(h // 8, w // 8, 16)
+            block_means = []
+            for y in range(0, h - block_size + 1, block_size):
+                for x in range(0, w - block_size + 1, block_size):
+                    block = ela_gray[y:y+block_size, x:x+block_size]
+                    block_means.append(np.mean(block))
+            
+            if len(block_means) < 4:
+                return {'suspicious': False, 'uniformity': 0.0}
+            
+            block_means = np.array(block_means)
+            mean_ela = np.mean(block_means)
+            std_ela = np.std(block_means)
+            
+            # Coeficiente de variación: bajo = uniforme = IA
+            # Fotos reales: CV > 0.4 (variación alta entre bloques)
+            # IA generada: CV < 0.25 (todos los bloques similares)
+            cv = std_ela / (mean_ela + 1e-10)
+            uniformity = max(0.0, 1.0 - cv)
+            
+            suspicious = uniformity > 0.65
+            
+            return {
+                'suspicious': suspicious,
+                'uniformity': float(uniformity),
+                'mean_ela': float(mean_ela),
+                'std_ela': float(std_ela),
+                'coefficient_of_variation': float(cv),
+            }
+        except Exception as e:
+            self.logger.debug(f"Error en ELA: {str(e)}")
+            return {'suspicious': False, 'uniformity': 0.0, 'error': str(e)}
+    
+    def _analyze_face_texture(self, image: np.ndarray) -> Dict:
+        """
+        Analizar textura de la región facial.
+        
+        Caras generadas por IA tienden a tener:
+        - Piel demasiado suave/uniforme
+        - Falta de poros y micro-texturas
+        - Gradientes de color demasiado perfectos
+        """
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+            
+            # Detectar cara con Haar Cascade
+            face_cascade = cv2.CascadeClassifier(
+                cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+            )
+            faces = face_cascade.detectMultiScale(gray, 1.3, 5, minSize=(50, 50))
+            
+            if len(faces) == 0:
+                return {'suspicious': False, 'face_detected': False}
+            
+            # Tomar la cara más grande
+            x, y, w, h = max(faces, key=lambda f: f[2] * f[3])
+            face_roi = gray[y:y+h, x:x+w]
+            
+            # Región central de la cara (mejillas/frente - donde se nota la IA)
+            margin_x = w // 4
+            margin_y = h // 4
+            face_center = gray[y+margin_y:y+h-margin_y, x+margin_x:x+w-margin_x]
+            
+            if face_center.size == 0:
+                return {'suspicious': False, 'face_detected': True}
+            
+            # 1. Laplacian de la cara (micro-textura)
+            face_lap = cv2.Laplacian(face_center, cv2.CV_64F)
+            face_lap_var = np.var(face_lap)
+            
+            # 2. Análisis de bordes finos (Canny con umbrales altos)
+            edges = cv2.Canny(face_center, 100, 200)
+            edge_density = np.sum(edges > 0) / edges.size
+            
+            # 3. Gradiente local (detecta suavizado excesivo)
+            sobelx = cv2.Sobel(face_center, cv2.CV_64F, 1, 0, ksize=3)
+            sobely = cv2.Sobel(face_center, cv2.CV_64F, 0, 1, ksize=3)
+            gradient_mag = np.sqrt(sobelx**2 + sobely**2)
+            gradient_mean = np.mean(gradient_mag)
+            gradient_std = np.std(gradient_mag)
+            
+            # Score de suavidad: combina múltiples indicadores
+            # Caras reales (foto de pasaporte): laplacian 50-300, edge_density 0.03-0.15
+            # Caras IA: laplacian < 30, edge_density < 0.02, gradiente uniforme
+            smoothness = 0.0
+            
+            if face_lap_var < 20:
+                smoothness += 0.40  # Muy suave
+            elif face_lap_var < 50:
+                smoothness += 0.25  # Suave
+            elif face_lap_var < 100:
+                smoothness += 0.10
+            
+            if edge_density < 0.01:
+                smoothness += 0.30  # Casi sin bordes finos
+            elif edge_density < 0.03:
+                smoothness += 0.15
+            
+            # Gradiente demasiado uniforme (std bajo relativo a mean)
+            grad_cv = gradient_std / (gradient_mean + 1e-10)
+            if grad_cv < 0.8:
+                smoothness += 0.20  # Gradientes muy uniformes
+            elif grad_cv < 1.2:
+                smoothness += 0.10
+            
+            suspicious = smoothness > 0.55
+            
+            return {
+                'suspicious': suspicious,
+                'face_detected': True,
+                'smoothness_score': float(smoothness),
+                'face_laplacian': float(face_lap_var),
+                'edge_density': float(edge_density),
+                'gradient_mean': float(gradient_mean),
+                'gradient_cv': float(grad_cv),
+            }
+        except Exception as e:
+            self.logger.debug(f"Error en análisis facial: {str(e)}")
+            return {'suspicious': False, 'face_detected': False, 'error': str(e)}
+    
+    def _analyze_frequency(self, image: np.ndarray) -> Dict:
+        """
+        Análisis de dominio de frecuencia.
+        
+        Generadores IA (GANs, Diffusion) dejan artefactos en el espectro de frecuencia:
+        - Picos en frecuencias específicas
+        - Espectro demasiado suave (falta de ruido de alta frecuencia natural)
+        - Patrones periódicos no naturales
+        """
+        try:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if len(image.shape) == 3 else image
+            
+            # Redimensionar a tamaño estándar para comparación consistente
+            resized = cv2.resize(gray, (256, 256))
+            
+            # FFT 2D
+            f_transform = np.fft.fft2(resized.astype(np.float64))
+            f_shift = np.fft.fftshift(f_transform)
+            magnitude = np.log1p(np.abs(f_shift))
+            
+            # Análisis radial del espectro
+            center = (128, 128)
+            Y, X = np.ogrid[:256, :256]
+            r = np.sqrt((X - center[0])**2 + (Y - center[1])**2)
+            
+            # Dividir en bandas de frecuencia
+            low_freq = magnitude[r < 30].mean()
+            mid_freq = magnitude[(r >= 30) & (r < 80)].mean()
+            high_freq = magnitude[r >= 80].mean()
+            
+            # Ratio alta/media frecuencia - Fotos reales tienen más alta frecuencia
+            # (ruido del sensor, textura de impresión, etc.)
+            # IA: ratio bajo (falta detalle de alta frecuencia)
+            hm_ratio = high_freq / (mid_freq + 1e-10)
+            lm_ratio = low_freq / (mid_freq + 1e-10)
+            
+            # Azimuthal analysis: desviación angular del espectro
+            # IA tiende a tener espectro más isótropo (uniforme en todas direcciones)
+            angles = np.arctan2(Y - center[1], X - center[0])
+            angular_bins = 12
+            angular_means = []
+            for i in range(angular_bins):
+                a_start = -np.pi + i * (2 * np.pi / angular_bins)
+                a_end = a_start + (2 * np.pi / angular_bins)
+                mask = (angles >= a_start) & (angles < a_end) & (r > 30) & (r < 100)
+                if np.any(mask):
+                    angular_means.append(float(magnitude[mask].mean()))
+            
+            angular_std = np.std(angular_means) if angular_means else 0.0
+            angular_mean = np.mean(angular_means) if angular_means else 1.0
+            angular_cv = angular_std / (angular_mean + 1e-10)
+            
+            # IA: hm_ratio < 0.65 Y angular_cv < 0.05
+            # Real: hm_ratio > 0.70 O angular_cv > 0.06
+            suspicious = (hm_ratio < 0.60 and angular_cv < 0.04)
+            
+            return {
+                'suspicious': suspicious,
+                'high_mid_ratio': float(hm_ratio),
+                'low_mid_ratio': float(lm_ratio),
+                'angular_cv': float(angular_cv),
+                'low_freq': float(low_freq),
+                'mid_freq': float(mid_freq),
+                'high_freq': float(high_freq),
+            }
+        except Exception as e:
+            self.logger.debug(f"Error en análisis de frecuencia: {str(e)}")
+            return {'suspicious': False, 'error': str(e)}
+    
+    def _analyze_color_channels(self, image: np.ndarray) -> Dict:
+        """
+        Analizar correlación entre canales de color.
+        
+        Imágenes IA tienen patrones de color anómalos:
+        - Correlación entre canales demasiado alta o baja
+        - Distribución de saturación poco natural
+        - Anomalías en el espacio de color HSV
+        """
+        try:
+            if len(image.shape) != 3 or image.shape[2] != 3:
+                return {'suspicious': False}
+            
+            b, g, r = cv2.split(image)
+            
+            # 1. Correlación entre canales
+            # Flatten
+            r_flat = r.flatten().astype(np.float64)
+            g_flat = g.flatten().astype(np.float64)
+            b_flat = b.flatten().astype(np.float64)
+            
+            # Correlación de Pearson
+            rg_corr = np.corrcoef(r_flat, g_flat)[0, 1]
+            rb_corr = np.corrcoef(r_flat, b_flat)[0, 1]
+            gb_corr = np.corrcoef(g_flat, b_flat)[0, 1]
+            
+            # IA tiende a tener correlaciones MUY altas (> 0.97) entre todos los canales
+            mean_corr = (abs(rg_corr) + abs(rb_corr) + abs(gb_corr)) / 3
+            
+            # 2. Análisis de saturación en HSV
+            hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+            saturation = hsv[:, :, 1].flatten().astype(np.float64)
+            sat_std = np.std(saturation)
+            sat_mean = np.mean(saturation)
+            
+            # IA: saturación muy uniforme (std bajo) o media baja
+            sat_cv = sat_std / (sat_mean + 1e-10)
+            
+            # 3. Análisis de rango dinámico por canal
+            ranges = []
+            for ch in [r, g, b]:
+                p5 = np.percentile(ch, 5)
+                p95 = np.percentile(ch, 95)
+                ranges.append(p95 - p5)
+            range_std = np.std(ranges)
+            
+            # Sospechoso: correlación muy alta + saturación uniforme + rangos similares
+            suspicious = (mean_corr > 0.97 and sat_cv < 0.5 and range_std < 15)
+            
+            return {
+                'suspicious': suspicious,
+                'mean_correlation': float(mean_corr),
+                'rg_corr': float(rg_corr),
+                'rb_corr': float(rb_corr),
+                'gb_corr': float(gb_corr),
+                'saturation_cv': float(sat_cv),
+                'range_std': float(range_std),
+            }
+        except Exception as e:
+            self.logger.debug(f"Error en análisis de color: {str(e)}")
+            return {'suspicious': False, 'error': str(e)}
     
     def get_summary(self, analysis: Dict) -> str:
         """Generar resumen legible del análisis"""
