@@ -135,9 +135,9 @@ if (-not $SkipInstall) {
         & $venvPython -m pip install "opencv-python-headless>=4.8.0" --quiet 2>&1 | Out-Null
     }
     # numpy <2.0 es requerido por opencv y torch
-    & $venvPython -m pip install "numpy>=1.24.3,<2.0" --quiet 2>&1 | Out-Null
+    & $venvPython -m pip install 'numpy>=1.24.3,<2.0' --quiet 2>&1 | Out-Null
     if (-not (Test-PythonModule "scipy")) {
-        & $venvPython -m pip install "scipy>=1.11.2,<1.14" --quiet 2>&1 | Out-Null
+        & $venvPython -m pip install 'scipy>=1.11.2,<1.14' --quiet 2>&1 | Out-Null
     }
     if (-not (Test-PythonModule "skimage")) {
         & $venvPython -m pip install "scikit-image>=0.21.0" --quiet 2>&1 | Out-Null
@@ -183,7 +183,7 @@ if (-not $SkipInstall) {
             Write-Host "  OK: PyTorch instalado" -ForegroundColor Green
         }
         # Corregir numpy (torch puede arrastrar numpy 2.x)
-        & $venvPython -m pip install "numpy>=1.24.3,<2.0" --force-reinstall --no-deps --quiet 2>&1 | Out-Null
+        & $venvPython -m pip install 'numpy>=1.24.3,<2.0' --force-reinstall --no-deps --quiet 2>&1 | Out-Null
     }
 
     # --- Etapa 4: Modelos NLP/OCR (transformers, easyocr) ---
@@ -204,7 +204,7 @@ if (-not $SkipInstall) {
         Write-Host "  ⚠️ Algunas dependencias pueden faltar. El servidor intentará iniciar." -ForegroundColor Yellow
     }
 } else {
-    Write-Host "[3/5] Saltando instalacion (--SkipInstall)" -ForegroundColor Gray
+    Write-Host '[3/5] Saltando instalacion (-SkipInstall)' -ForegroundColor Gray
 }
 
 # --- 4. Crear directorios necesarios ---
@@ -256,9 +256,9 @@ try {
     & $pythonCmd -m venv .venv
     & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
     & $venvPython -m pip install fastapi uvicorn python-multipart pydantic pillow --quiet 2>&1 | Out-Null
-    & $venvPython -m pip install "opencv-python-headless>=4.8.0" "numpy>=1.24.3,<2.0" --quiet 2>&1 | Out-Null
+    & $venvPython -m pip install 'opencv-python-headless>=4.8.0' 'numpy>=1.24.3,<2.0' --quiet 2>&1 | Out-Null
     & $venvPython -m pip install torch torchvision 2>&1 | Out-Null
-    & $venvPython -m pip install "numpy>=1.24.3,<2.0" --force-reinstall --no-deps --quiet 2>&1 | Out-Null
+    & $venvPython -m pip install 'numpy>=1.24.3,<2.0' --force-reinstall --no-deps --quiet 2>&1 | Out-Null
     & $venvPython -m pip install "transformers>=4.35.0" "easyocr>=1.7.0" --quiet 2>&1 | Out-Null
     
     Write-Host "Reiniciando servidor..." -ForegroundColor Gray
