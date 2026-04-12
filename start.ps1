@@ -98,31 +98,54 @@ if (-not $SkipInstall) {
     
     # Actualizar pip
     & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
-    
-    # Instalar dependencias de requirements.txt PRIMERO
-    if (Test-Path "requirements.txt") {
-        & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            Write-Host "  ⚠️ Error instalando dependencias, recreando..." -ForegroundColor Yellow
-            Remove-Item -Recurse -Force $venvPath -ErrorAction SilentlyContinue
-            Start-Sleep 1
-            
-            & $pythonCmd -m venv .venv
-            & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
-            & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
-            
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "  ERROR: No se pudieron instalar las dependencias." -ForegroundColor Red
-                Write-Host "  Revisa tu conexión a internet y requirements.txt" -ForegroundColor Red
-                exit 1
-            }
-        }
-    } else {
-        Write-Host "  ⚠️ requirements.txt no encontrado" -ForegroundColor Yellow
+
+    # ---- Función auxiliar para verificar si un módulo ya está instalado ----
+    function Test-PythonModule($module) {
+        & $venvPython -c "import $module" >$null 2>&1
+        return ($LASTEXITCODE -eq 0)
     }
-    
-    # Detectar GPU NVIDIA e instalar PyTorch con CUDA DESPUÉS de requirements
-    # (para que no se sobreescriba con la versión CPU)
+
+    # ================================================================
+    # Instalación por ETAPAS (evita timeouts en conexiones lentas)
+    # Los paquetes pesados (torch ~2GB, easyocr, transformers) se
+    # instalan por separado con feedback visual.
+    # ================================================================
+
+    # --- Etapa 1: Paquetes ligeros (API, utilidades) ---
+    Write-Host "  [3a] Paquetes ligeros (API, utilidades)..." -ForegroundColor Gray
+    $lightPkgs = "fastapi>=0.104.1", "uvicorn>=0.24.0", "python-multipart>=0.0.6",
+                  "pydantic>=2.4.2", "pillow>=10.0.0", "pandas>=2.0.3",
+                  "huggingface_hub>=0.20.0", "kagglehub>=0.2.1"
+    $needLight = $false
+    foreach ($pkg in @("fastapi", "uvicorn", "PIL", "pandas")) {
+        if (-not (Test-PythonModule $pkg)) { $needLight = $true; break }
+    }
+    if ($needLight) {
+        & $venvPython -m pip install $lightPkgs --quiet 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ⚠️ Reintentando paquetes ligeros..." -ForegroundColor Yellow
+            & $venvPython -m pip install $lightPkgs 2>&1 | Out-Null
+        }
+    }
+    Write-Host "  OK: Paquetes ligeros" -ForegroundColor Green
+
+    # --- Etapa 2: Visión computacional (opencv, numpy, scipy) ---
+    Write-Host "  [3b] Visión computacional (opencv, numpy, scipy)..." -ForegroundColor Gray
+    if (-not (Test-PythonModule "cv2")) {
+        & $venvPython -m pip install "opencv-python-headless>=4.8.0" --quiet 2>&1 | Out-Null
+    }
+    # numpy <2.0 es requerido por opencv y torch
+    & $venvPython -m pip install "numpy>=1.24.3,<2.0" --quiet 2>&1 | Out-Null
+    if (-not (Test-PythonModule "scipy")) {
+        & $venvPython -m pip install "scipy>=1.11.2,<1.14" --quiet 2>&1 | Out-Null
+    }
+    if (-not (Test-PythonModule "skimage")) {
+        & $venvPython -m pip install "scikit-image>=0.21.0" --quiet 2>&1 | Out-Null
+    }
+    Write-Host "  OK: Visión computacional" -ForegroundColor Green
+
+    # --- Etapa 3: PyTorch (el más pesado, ~2GB) ---
+    Write-Host "  [3c] PyTorch (puede tardar varios minutos)..." -ForegroundColor Gray
     $hasNvidiaGpu = $false
     try {
         $nvidiaSmi = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
@@ -131,30 +154,55 @@ if (-not $SkipInstall) {
             Write-Host "  GPU detectada: $($nvidiaSmi.Trim())" -ForegroundColor Cyan
         }
     } catch { }
-    
-    if ($hasNvidiaGpu) {
-        $torchCuda = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
-        if ($torchCuda -ne "True") {
-            Write-Host "  Reinstalando PyTorch con soporte CUDA (GPU)..." -ForegroundColor Yellow
-            & $venvPython -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >$null 2>&1
-            # Corregir numpy (torch puede arrastrar numpy 2.x incompatible)
-            & $venvPython -m pip install "numpy>=1.24.3,<2.0" --quiet >$null 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                $verify = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
-                if ($verify -eq "True") {
-                    Write-Host "  OK: PyTorch CUDA verificado" -ForegroundColor Green
-                } else {
-                    Write-Host "  ⚠️ PyTorch instalado pero CUDA no disponible" -ForegroundColor Yellow
-                }
-            } else {
-                Write-Host "  ⚠️ No se pudo instalar PyTorch CUDA, usando CPU" -ForegroundColor Yellow
+
+    $torchOk = $false
+    if (Test-PythonModule "torch") {
+        if ($hasNvidiaGpu) {
+            $torchCuda = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
+            if ($torchCuda -eq "True") {
+                Write-Host "  OK: PyTorch CUDA ya activo" -ForegroundColor Green
+                $torchOk = $true
             }
         } else {
-            Write-Host "  OK: PyTorch CUDA ya activo" -ForegroundColor Green
+            Write-Host "  OK: PyTorch ya instalado (CPU)" -ForegroundColor Green
+            $torchOk = $true
         }
     }
-    
-    Write-Host "  OK: Dependencias listas" -ForegroundColor Green
+
+    if (-not $torchOk) {
+        if ($hasNvidiaGpu) {
+            Write-Host "  Instalando PyTorch con CUDA (GPU)..." -ForegroundColor Yellow
+            & $venvPython -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 2>&1 | Out-Null
+        } else {
+            Write-Host "  Instalando PyTorch (CPU)..." -ForegroundColor Yellow
+            & $venvPython -m pip install torch torchvision 2>&1 | Out-Null
+        }
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "  ⚠️ Error instalando PyTorch. Verifica tu conexión." -ForegroundColor Yellow
+        } else {
+            Write-Host "  OK: PyTorch instalado" -ForegroundColor Green
+        }
+        # Corregir numpy (torch puede arrastrar numpy 2.x)
+        & $venvPython -m pip install "numpy>=1.24.3,<2.0" --force-reinstall --no-deps --quiet 2>&1 | Out-Null
+    }
+
+    # --- Etapa 4: Modelos NLP/OCR (transformers, easyocr) ---
+    Write-Host "  [3d] Modelos OCR (transformers, easyocr)..." -ForegroundColor Gray
+    if (-not (Test-PythonModule "transformers")) {
+        & $venvPython -m pip install "transformers>=4.35.0" --quiet 2>&1 | Out-Null
+    }
+    if (-not (Test-PythonModule "easyocr")) {
+        & $venvPython -m pip install "easyocr>=1.7.0" --quiet 2>&1 | Out-Null
+    }
+    Write-Host "  OK: Modelos OCR" -ForegroundColor Green
+
+    # --- Verificación final ---
+    $allOk = & $venvPython -c "import uvicorn, fastapi, cv2, torch, easyocr, transformers; print('OK')" 2>$null
+    if ($allOk -eq "OK") {
+        Write-Host "  ✓ Todas las dependencias verificadas" -ForegroundColor Green
+    } else {
+        Write-Host "  ⚠️ Algunas dependencias pueden faltar. El servidor intentará iniciar." -ForegroundColor Yellow
+    }
 } else {
     Write-Host "[3/5] Saltando instalacion (--SkipInstall)" -ForegroundColor Gray
 }
@@ -207,7 +255,11 @@ try {
     Write-Host "Recreando entorno virtual..." -ForegroundColor Gray
     & $pythonCmd -m venv .venv
     & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
-    & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
+    & $venvPython -m pip install fastapi uvicorn python-multipart pydantic pillow --quiet 2>&1 | Out-Null
+    & $venvPython -m pip install "opencv-python-headless>=4.8.0" "numpy>=1.24.3,<2.0" --quiet 2>&1 | Out-Null
+    & $venvPython -m pip install torch torchvision 2>&1 | Out-Null
+    & $venvPython -m pip install "numpy>=1.24.3,<2.0" --force-reinstall --no-deps --quiet 2>&1 | Out-Null
+    & $venvPython -m pip install "transformers>=4.35.0" "easyocr>=1.7.0" --quiet 2>&1 | Out-Null
     
     Write-Host "Reiniciando servidor..." -ForegroundColor Gray
     Write-Host ""

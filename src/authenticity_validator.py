@@ -182,7 +182,15 @@ class AuthenticityValidator:
             results['anomalias'] = list(results['analisis']['metadata_warnings'])
             
             # Confianza en detección de IA
-            results['confianza']['ia'] = ai_analysis.get('confidence', 0)
+            # Para documentos clasificados como NATURAL, el score bajo de sospecha
+            # no debe mostrarse como "% de IA" en la UI (genera confusión).
+            # Solo pasar el score significativo cuando hay señal real de edición/IA.
+            ai_method = ai_analysis.get('detected_method', 'NATURAL')
+            if ai_method == 'NATURAL':
+                # Pasaporte real: IA confidence mínima (ruido residual no es señal)
+                results['confianza']['ia'] = min(ai_analysis.get('confidence', 0), 0.10)
+            else:
+                results['confianza']['ia'] = ai_analysis.get('confidence', 0)
         
         except Exception as e:
             logger.error(f"Error en validación de autenticidad: {str(e)}")
