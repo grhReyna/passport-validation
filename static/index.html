@@ -232,6 +232,10 @@
         @keyframes spin { to { transform: rotate(360deg); } }
         .loading-state h6 { font-weight: 700; margin-bottom: 4px; }
         .loading-state p { color: var(--text-muted); font-size: .85rem; }
+        .loading-progress-bar { width: 80%; max-width: 320px; height: 6px; background: #e2e8f0; border-radius: 3px; margin: 12px auto 0; overflow: hidden; display: none; }
+        .loading-progress-bar.show { display: block; }
+        .loading-progress-fill { height: 100%; background: var(--accent); border-radius: 3px; transition: width .3s ease; width: 0%; }
+        .loading-step { color: var(--text-muted); font-size: .78rem; margin-top: 8px; min-height: 1.2em; }
 
         /* ── Error ── */
         .error-banner {
@@ -518,8 +522,12 @@
         <!-- Loading -->
         <div id="loadingState" class="loading-state">
             <div class="pulse-ring"></div>
-            <h6>Analizando pasaporte...</h6>
-            <p>Procesando OCR, MRZ y deteccion de IA</p>
+            <h6 id="loadingTitle">Analizando pasaporte...</h6>
+            <p id="loadingSubtitle">Procesando OCR, MRZ y deteccion de IA</p>
+            <div id="loadingProgressBar" class="loading-progress-bar">
+                <div id="loadingProgressFill" class="loading-progress-fill"></div>
+            </div>
+            <div id="loadingStep" class="loading-step"></div>
         </div>
 
         <!-- Results -->
@@ -699,9 +707,51 @@
             sendFile(file);
         }
 
+        // ═══════ MODEL STATUS POLLING ═══════
+        let _statusInterval = null;
+        function startStatusPolling() {
+            const title = document.getElementById('loadingTitle');
+            const subtitle = document.getElementById('loadingSubtitle');
+            const bar = document.getElementById('loadingProgressBar');
+            const fill = document.getElementById('loadingProgressFill');
+            const step = document.getElementById('loadingStep');
+            _statusInterval = setInterval(async () => {
+                try {
+                    const r = await fetch(API + '/model-status');
+                    const s = await r.json();
+                    if (s.status === 'downloading') {
+                        title.textContent = 'Descargando modelo de IA...';
+                        subtitle.textContent = 'Primera ejecución, esto solo ocurre una vez';
+                        bar.classList.add('show');
+                        if (s.total > 0) fill.style.width = Math.round((s.progress / s.total) * 100) + '%';
+                        step.textContent = s.step || '';
+                    } else if (s.status === 'loading') {
+                        title.textContent = 'Cargando modelo...';
+                        subtitle.textContent = 'Preparando el modelo en memoria';
+                        bar.classList.add('show');
+                        fill.style.width = '100%';
+                        step.textContent = s.step || '';
+                    } else if (s.status === 'ready') {
+                        title.textContent = 'Analizando pasaporte...';
+                        subtitle.textContent = 'Procesando OCR, MRZ y detección de IA';
+                        bar.classList.remove('show');
+                        step.textContent = '';
+                    }
+                } catch(e) {}
+            }, 800);
+        }
+        function stopStatusPolling() {
+            if (_statusInterval) { clearInterval(_statusInterval); _statusInterval = null; }
+            document.getElementById('loadingTitle').textContent = 'Analizando pasaporte...';
+            document.getElementById('loadingSubtitle').textContent = 'Procesando OCR, MRZ y detección de IA';
+            document.getElementById('loadingProgressBar').classList.remove('show');
+            document.getElementById('loadingStep').textContent = '';
+        }
+
         // ═══════ API CALL ═══════
         async function sendFile(file) {
             showLoading(true); hideError();
+            startStatusPolling();
             try {
                 const fd = new FormData();
                 fd.append('file', file);
@@ -715,6 +765,7 @@
             } catch (err) {
                 showError(err.message);
             } finally {
+                stopStatusPolling();
                 showLoading(false);
             }
         }

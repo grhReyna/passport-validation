@@ -299,13 +299,29 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
         # Intentar cargar modelo local finetuned primero
         loaded = False
         from pathlib import Path as _Path
-        if _Path(model_name).exists():
+        
+        # Función para reportar estado al endpoint /model-status
+        def _update_status(status, step="", progress=0, total=0):
+            try:
+                import app as _app
+                _app._model_status = {"status": status, "step": step, "progress": progress, "total": total}
+            except Exception:
+                pass
+        
+        _update_status("loading", "Buscando modelo local...")
+        local_model_path = _Path(model_name)
+        local_model_file = local_model_path / "model.safetensors"
+        # Verificar que exista el archivo del modelo real (no solo la carpeta o LFS pointers)
+        local_valid = (local_model_file.exists() and local_model_file.stat().st_size > 1_000_000)
+        if local_valid:
             try:
                 logger.info(f"Cargando modelo finetuned local: {model_name}")
+                _update_status("loading", "Cargando modelo local...")
                 processor = TrOCRProcessor.from_pretrained(model_name)
                 model = VisionEncoderDecoderModel.from_pretrained(model_name)
                 loaded = True
                 logger.info("✓ Modelo finetuned local cargado exitosamente")
+                _update_status("ready", "Modelo local cargado")
             except Exception as e:
                 logger.warning(f"No se pudo cargar modelo local: {e}")
         
@@ -323,9 +339,11 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
                     
                     if cached is not None and isinstance(cached, str):
                         logger.info(f"📦 Modelo encontrado en caché local, cargando sin descarga...")
+                        _update_status("loading", "Modelo en caché, cargando...")
                     else:
                         logger.info(f"⬇️  Descargando modelo desde HuggingFace Hub: {hf_model}")
                         logger.info(f"   Esto puede tardar unos minutos la primera vez (~1.3 GB)...")
+                        _update_status("downloading", "Iniciando descarga del modelo...", 0, 0)
                         
                         # Descargar archivos con progreso manual
                         files = list_repo_files(hf_model)
@@ -333,17 +351,22 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
                         for idx, filename in enumerate(files, 1):
                             size_label = " (archivo principal ~1.3 GB)" if "safetensors" in filename else ""
                             logger.info(f"   [{idx}/{total_files}] Descargando {filename}{size_label}...")
+                            _update_status("downloading", f"Descargando {filename}", idx, total_files)
                             hf_hub_download(hf_model, filename)
                         logger.info(f"   ✅ Descarga completa. Cargando modelo en memoria...")
+                        _update_status("loading", "Descarga completa, cargando en memoria...")
                     
                     start_time = time.time()
                     logger.info(f"🔄 Cargando processor...")
+                    _update_status("loading", "Cargando processor...")
                     processor = TrOCRProcessor.from_pretrained(hf_model)
                     logger.info(f"🔄 Cargando modelo en memoria (esto toma ~10-30s)...")
+                    _update_status("loading", "Cargando modelo en memoria...")
                     model = VisionEncoderDecoderModel.from_pretrained(hf_model)
                     elapsed = time.time() - start_time
                     loaded = True
                     logger.info(f"✅ Modelo finetuned de HuggingFace Hub cargado en {elapsed:.1f}s")
+                    _update_status("ready", f"Modelo cargado en {elapsed:.1f}s")
                 except ImportError:
                     logger.warning("huggingface_hub no instalado, intentando carga directa...")
                     try:
@@ -360,10 +383,12 @@ def load_trocr_model(model_name: str = config.TROCR_MODEL_NAME,
             # Fallback final al modelo base de HuggingFace
             fallback = getattr(config, 'TROCR_BASE_MODEL', model_name)
             logger.info(f"Cargando modelo TrOCR base: {fallback}")
+            _update_status("downloading", f"Descargando modelo base {fallback}...")
             processor = TrOCRProcessor.from_pretrained(fallback)
             model = VisionEncoderDecoderModel.from_pretrained(fallback)
             logger.info("✓ Modelo TrOCR base cargado exitosamente")
         
+        _update_status("ready", "Modelo listo")
         model.to(device)
         model.eval()  # Modo evaluación
         

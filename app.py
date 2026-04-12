@@ -97,6 +97,14 @@ async def health_check():
         "timestamp": datetime.utcnow().isoformat()
     }
 
+# Estado global del modelo
+_model_status = {"status": "not_loaded", "step": "", "progress": 0, "total": 0}
+
+@app.get("/model-status", tags=["Sistema"])
+async def model_status():
+    """Estado de carga/descarga del modelo"""
+    return _model_status
+
 @app.post("/verify-passport", tags=["Verificación"])
 async def verify_passport_endpoint(file: UploadFile = File(...)):
     """
