@@ -99,35 +99,8 @@ if (-not $SkipInstall) {
     # Actualizar pip
     & $venvPython -m pip install --upgrade pip --quiet >$null 2>&1
     
-    # Detectar GPU NVIDIA e instalar PyTorch con CUDA si es posible
-    $hasNvidiaGpu = $false
-    try {
-        $nvidiaSmi = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
-        if ($LASTEXITCODE -eq 0 -and $nvidiaSmi) {
-            $hasNvidiaGpu = $true
-            Write-Host "  GPU detectada: $($nvidiaSmi.Trim())" -ForegroundColor Cyan
-        }
-    } catch { }
-    
-    if ($hasNvidiaGpu) {
-        # Verificar si ya tiene torch con CUDA
-        $torchCuda = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
-        if ($torchCuda -ne "True") {
-            Write-Host "  Instalando PyTorch con soporte CUDA (GPU)..." -ForegroundColor Yellow
-            & $venvPython -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >$null 2>&1
-            if ($LASTEXITCODE -eq 0) {
-                Write-Host "  OK: PyTorch CUDA instalado" -ForegroundColor Green
-            } else {
-                Write-Host "  ⚠️ No se pudo instalar PyTorch CUDA, usando CPU" -ForegroundColor Yellow
-            }
-        } else {
-            Write-Host "  OK: PyTorch CUDA ya instalado" -ForegroundColor Green
-        }
-    }
-    
-    # Verificar si requirements.txt existe
+    # Instalar dependencias de requirements.txt PRIMERO
     if (Test-Path "requirements.txt") {
-        # Instalar dependencias (pip se encarga de verificar si ya están)
         & $venvPython -m pip install -r requirements.txt --quiet >$null 2>&1
         if ($LASTEXITCODE -ne 0) {
             Write-Host "  ⚠️ Error instalando dependencias, recreando..." -ForegroundColor Yellow
@@ -146,6 +119,37 @@ if (-not $SkipInstall) {
         }
     } else {
         Write-Host "  ⚠️ requirements.txt no encontrado" -ForegroundColor Yellow
+    }
+    
+    # Detectar GPU NVIDIA e instalar PyTorch con CUDA DESPUÉS de requirements
+    # (para que no se sobreescriba con la versión CPU)
+    $hasNvidiaGpu = $false
+    try {
+        $nvidiaSmi = & nvidia-smi --query-gpu=name --format=csv,noheader 2>$null
+        if ($LASTEXITCODE -eq 0 -and $nvidiaSmi) {
+            $hasNvidiaGpu = $true
+            Write-Host "  GPU detectada: $($nvidiaSmi.Trim())" -ForegroundColor Cyan
+        }
+    } catch { }
+    
+    if ($hasNvidiaGpu) {
+        $torchCuda = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
+        if ($torchCuda -ne "True") {
+            Write-Host "  Reinstalando PyTorch con soporte CUDA (GPU)..." -ForegroundColor Yellow
+            & $venvPython -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >$null 2>&1
+            if ($LASTEXITCODE -eq 0) {
+                $verify = & $venvPython -c "import torch; print(torch.cuda.is_available())" 2>$null
+                if ($verify -eq "True") {
+                    Write-Host "  OK: PyTorch CUDA verificado" -ForegroundColor Green
+                } else {
+                    Write-Host "  ⚠️ PyTorch instalado pero CUDA no disponible" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host "  ⚠️ No se pudo instalar PyTorch CUDA, usando CPU" -ForegroundColor Yellow
+            }
+        } else {
+            Write-Host "  OK: PyTorch CUDA ya activo" -ForegroundColor Green
+        }
     }
     
     Write-Host "  OK: Dependencias listas" -ForegroundColor Green

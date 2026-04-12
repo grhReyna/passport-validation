@@ -81,33 +81,8 @@ if [ "$SKIP_INSTALL" = false ]; then
     # Actualizar pip
     $VENV_PYTHON -m pip install --upgrade pip --quiet >/dev/null 2>&1
     
-    # Detectar GPU NVIDIA e instalar PyTorch con CUDA si es posible
-    HAS_NVIDIA=false
-    if command -v nvidia-smi &>/dev/null; then
-        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
-        if [ -n "$GPU_NAME" ]; then
-            HAS_NVIDIA=true
-            echo "  GPU detectada: $GPU_NAME"
-        fi
-    fi
-    
-    if [ "$HAS_NVIDIA" = true ]; then
-        TORCH_CUDA=$($VENV_PYTHON -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
-        if [ "$TORCH_CUDA" != "True" ]; then
-            echo "  Instalando PyTorch con soporte CUDA (GPU)..."
-            if $VENV_PYTHON -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >/dev/null 2>&1; then
-                echo "  OK: PyTorch CUDA instalado"
-            else
-                echo "  ⚠️ No se pudo instalar PyTorch CUDA, usando CPU"
-            fi
-        else
-            echo "  OK: PyTorch CUDA ya instalado"
-        fi
-    fi
-    
-    # Verificar si requirements.txt existe e instalar dependencias
+    # Instalar dependencias de requirements.txt PRIMERO
     if [ -f "requirements.txt" ]; then
-        # Instalar dependencias (pip se encarga de verificar si ya están)
         if ! $VENV_PYTHON -m pip install -r requirements.txt --quiet >/dev/null 2>&1; then
             echo "  ⚠️ Error instalando dependencias, recreando..."
             rm -rf .venv
@@ -125,6 +100,35 @@ if [ "$SKIP_INSTALL" = false ]; then
         fi
     else
         echo "  ⚠️ requirements.txt no encontrado"
+    fi
+    
+    # Detectar GPU NVIDIA e instalar PyTorch con CUDA DESPUÉS de requirements
+    HAS_NVIDIA=false
+    if command -v nvidia-smi &>/dev/null; then
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+        if [ -n "$GPU_NAME" ]; then
+            HAS_NVIDIA=true
+            echo "  GPU detectada: $GPU_NAME"
+        fi
+    fi
+    
+    if [ "$HAS_NVIDIA" = true ]; then
+        TORCH_CUDA=$($VENV_PYTHON -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
+        if [ "$TORCH_CUDA" != "True" ]; then
+            echo "  Reinstalando PyTorch con soporte CUDA (GPU)..."
+            if $VENV_PYTHON -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >/dev/null 2>&1; then
+                VERIFY=$($VENV_PYTHON -c "import torch; print(torch.cuda.is_available())" 2>/dev/null)
+                if [ "$VERIFY" = "True" ]; then
+                    echo "  OK: PyTorch CUDA verificado"
+                else
+                    echo "  ⚠️ PyTorch instalado pero CUDA no disponible"
+                fi
+            else
+                echo "  ⚠️ No se pudo instalar PyTorch CUDA, usando CPU"
+            fi
+        else
+            echo "  OK: PyTorch CUDA ya activo"
+        fi
     fi
     
     echo "  OK: Dependencias listas"
