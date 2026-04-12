@@ -84,6 +84,7 @@ class PassportVerifier:
 
         highres_document_image = None
         original_full_image = None
+        raw_image_bytes = image_input if isinstance(image_input, bytes) else None
         
         try:
             self.logger.info("=" * 60)
@@ -341,7 +342,8 @@ class PassportVerifier:
                     mrz_score=mrz_score,
                     ocr_confidence=ocr_score,
                     mrz_result=mrz_result,
-                    original_confidence=float(ocr_score * 40 + mrz_score * 60)
+                    original_confidence=float(ocr_score * 40 + mrz_score * 60),
+                    raw_bytes=raw_image_bytes
                 )
                 
                 result["processing_stages"]["scoring"] = {

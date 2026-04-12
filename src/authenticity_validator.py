@@ -35,7 +35,8 @@ class AuthenticityValidator:
         mrz_score: float,
         ocr_confidence: float,
         mrz_result: Dict,
-        original_confidence: float
+        original_confidence: float,
+        raw_bytes: bytes = None
     ) -> Dict:
         """
         Validación completa de autenticidad
@@ -75,7 +76,7 @@ class AuthenticityValidator:
         
         try:
             # 1. ANÁLISIS DE IA/EDICIÓN
-            ai_analysis = self.ai_detector.detect_from_image(image_array)
+            ai_analysis = self.ai_detector.detect_from_image(image_array, raw_bytes=raw_bytes)
             results['analisis']['ai_analysis'] = ai_analysis
             
             # 2. DETERMINAR SI FUE POR IA

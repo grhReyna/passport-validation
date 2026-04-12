@@ -15,12 +15,13 @@ Valida:
 
 import logging
 import io
+import struct
 from pathlib import Path
 from PIL import Image
 from PIL.ExifTags import TAGS
 import numpy as np
 import cv2
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ class AIDetector:
         """Inicializar detector"""
         self.logger = logging.getLogger(__name__)
     
-    def detect_from_image(self, image_array: np.ndarray) -> Dict:
+    def detect_from_image(self, image_array: np.ndarray, raw_bytes: Optional[bytes] = None) -> Dict:
         """
         Detectar anomalías de IA/edición en imagen.
         
@@ -54,6 +55,7 @@ class AIDetector:
         
         Args:
             image_array: Array numpy de imagen (BGR)
+            raw_bytes: Bytes crudos del archivo (para análisis de chunks/metadata)
             
         Returns:
             dict: Análisis con puntuación y detalles
@@ -99,6 +101,10 @@ class AIDetector:
             # Análisis 8: Correlación de canales de color
             color_analysis = self._analyze_color_channels(image_array)
             results['details']['color'] = color_analysis
+            
+            # Análisis 9: Chunk data / metadata binaria
+            chunk_analysis = self._analyze_chunks(raw_bytes) if raw_bytes else {'suspicious': False, 'ai_markers': []}
+            results['details']['chunks'] = chunk_analysis
             
             # ====== SCORING CONTINUO ======
             # Cada análisis aporta un score de sospecha (0.0 = limpio, 1.0 = muy sospechoso)
@@ -215,6 +221,15 @@ class AIDetector:
             if color_suspicious:
                 suspicion_score += 0.15
                 results['red_flags'].append('Correlación de canales de color anómala')
+            
+            # --- Chunks / Metadata binaria ---
+            chunk_markers = chunk_analysis.get('ai_markers', [])
+            if chunk_markers:
+                # Evidencia directa en metadata = señal muy fuerte
+                marker_score = min(0.60, len(chunk_markers) * 0.30)
+                suspicion_score += marker_score
+                for marker in chunk_markers:
+                    results['red_flags'].append(f'Metadata: {marker}')
             
             # ====== DECISIÓN FINAL ======
             # Umbral continuo en vez de contar banderas
@@ -691,6 +706,250 @@ class AIDetector:
             self.logger.debug(f"Error en análisis de color: {str(e)}")
             return {'suspicious': False, 'error': str(e)}
     
+    def _analyze_chunks(self, raw_bytes: bytes) -> Dict:
+        """
+        Analizar chunks/metadata binaria del archivo de imagen.
+        
+        Herramientas de IA dejan rastros en:
+        - PNG tEXt/iTXt chunks: "parameters", "Dream", "Stable Diffusion", "ComfyUI"
+        - JPEG APP markers: XMP con "ai", "generated", "midjourney"
+        - JPEG COM markers: comentarios con herramientas IA
+        - EXIF UserComment, ImageDescription
+        - PNG Software chunk
+        - WebP metadata
+        """
+        result = {
+            'suspicious': False,
+            'ai_markers': [],
+            'metadata_found': [],
+            'format': 'unknown',
+        }
+        
+        if not raw_bytes or len(raw_bytes) < 8:
+            return result
+        
+        try:
+            # Detectar formato
+            if raw_bytes[:8] == b'\x89PNG\r\n\x1a\n':
+                result['format'] = 'PNG'
+                self._analyze_png_chunks(raw_bytes, result)
+            elif raw_bytes[:2] == b'\xff\xd8':
+                result['format'] = 'JPEG'
+                self._analyze_jpeg_chunks(raw_bytes, result)
+            elif raw_bytes[:4] == b'RIFF' and raw_bytes[8:12] == b'WEBP':
+                result['format'] = 'WEBP'
+                self._analyze_webp_chunks(raw_bytes, result)
+            
+            # Búsqueda genérica de strings IA en todo el archivo
+            self._search_ai_strings(raw_bytes, result)
+            
+            result['suspicious'] = len(result['ai_markers']) > 0
+            
+        except Exception as e:
+            self.logger.debug(f"Error en análisis de chunks: {str(e)}")
+            result['error'] = str(e)
+        
+        return result
+    
+    def _analyze_png_chunks(self, raw_bytes: bytes, result: Dict):
+        """Leer chunks PNG y buscar metadata de IA"""
+        try:
+            offset = 8  # Skip PNG signature
+            while offset < len(raw_bytes) - 12:
+                # Cada chunk: 4 bytes length + 4 bytes type + data + 4 bytes CRC
+                chunk_len = struct.unpack('>I', raw_bytes[offset:offset+4])[0]
+                chunk_type = raw_bytes[offset+4:offset+8].decode('ascii', errors='replace')
+                chunk_data_start = offset + 8
+                chunk_data_end = chunk_data_start + chunk_len
+                
+                if chunk_data_end > len(raw_bytes):
+                    break
+                
+                chunk_data = raw_bytes[chunk_data_start:chunk_data_end]
+                
+                # Chunks de texto: tEXt, iTXt, zTXt
+                if chunk_type in ('tEXt', 'iTXt', 'zTXt'):
+                    try:
+                        text_content = chunk_data.decode('utf-8', errors='replace').lower()
+                        result['metadata_found'].append({
+                            'type': chunk_type, 
+                            'preview': text_content[:200]
+                        })
+                        self._check_ai_text(text_content, chunk_type, result)
+                    except Exception:
+                        pass
+                
+                offset = chunk_data_end + 4  # Skip CRC
+                
+                if chunk_type == 'IEND':
+                    break
+                    
+        except Exception as e:
+            self.logger.debug(f"Error leyendo PNG chunks: {e}")
+    
+    def _analyze_jpeg_chunks(self, raw_bytes: bytes, result: Dict):
+        """Leer markers JPEG y buscar metadata de IA"""
+        try:
+            offset = 2  # Skip SOI (FF D8)
+            while offset < len(raw_bytes) - 4:
+                if raw_bytes[offset] != 0xFF:
+                    offset += 1
+                    continue
+                
+                marker = raw_bytes[offset + 1]
+                
+                # SOS (Start of Scan) = fin de headers
+                if marker == 0xDA:
+                    break
+                
+                # Markers sin payload
+                if marker in (0xD8, 0xD9, 0x00):
+                    offset += 2
+                    continue
+                
+                # Leer longitud del segmento
+                if offset + 4 > len(raw_bytes):
+                    break
+                seg_len = struct.unpack('>H', raw_bytes[offset+2:offset+4])[0]
+                seg_data_start = offset + 4
+                seg_data_end = offset + 2 + seg_len
+                
+                if seg_data_end > len(raw_bytes):
+                    break
+                
+                seg_data = raw_bytes[seg_data_start:seg_data_end]
+                
+                # APP0-APP15 markers (0xE0-0xEF)
+                if 0xE0 <= marker <= 0xEF:
+                    try:
+                        text_content = seg_data.decode('utf-8', errors='replace').lower()
+                        marker_name = f'APP{marker - 0xE0}'
+                        
+                        # APP1 = EXIF/XMP, APP13 = IPTC
+                        if len(text_content) > 10:
+                            result['metadata_found'].append({
+                                'type': marker_name,
+                                'preview': text_content[:200]
+                            })
+                        self._check_ai_text(text_content, marker_name, result)
+                    except Exception:
+                        pass
+                
+                # COM marker (0xFE) - Comment
+                elif marker == 0xFE:
+                    try:
+                        comment = seg_data.decode('utf-8', errors='replace').lower()
+                        result['metadata_found'].append({
+                            'type': 'COM',
+                            'preview': comment[:200]
+                        })
+                        self._check_ai_text(comment, 'COM', result)
+                    except Exception:
+                        pass
+                
+                offset = seg_data_end
+                
+        except Exception as e:
+            self.logger.debug(f"Error leyendo JPEG markers: {e}")
+    
+    def _analyze_webp_chunks(self, raw_bytes: bytes, result: Dict):
+        """Leer chunks WebP y buscar metadata de IA"""
+        try:
+            offset = 12  # Skip RIFF header + WEBP
+            file_size = min(struct.unpack('<I', raw_bytes[4:8])[0] + 8, len(raw_bytes))
+            
+            while offset < file_size - 8:
+                chunk_id = raw_bytes[offset:offset+4].decode('ascii', errors='replace')
+                chunk_size = struct.unpack('<I', raw_bytes[offset+4:offset+8])[0]
+                chunk_data = raw_bytes[offset+8:offset+8+chunk_size]
+                
+                if chunk_id in ('EXIF', 'XMP '):
+                    try:
+                        text = chunk_data.decode('utf-8', errors='replace').lower()
+                        result['metadata_found'].append({
+                            'type': f'WEBP_{chunk_id.strip()}',
+                            'preview': text[:200]
+                        })
+                        self._check_ai_text(text, f'WEBP_{chunk_id}', result)
+                    except Exception:
+                        pass
+                
+                # Align to even byte
+                offset += 8 + chunk_size + (chunk_size % 2)
+                
+        except Exception as e:
+            self.logger.debug(f"Error leyendo WebP chunks: {e}")
+    
+    def _check_ai_text(self, text: str, source: str, result: Dict):
+        """Buscar indicadores de IA en texto de metadata"""
+        text_lower = text.lower()
+        
+        ai_indicators = {
+            'stable diffusion': 'Stable Diffusion detectado',
+            'comfyui': 'ComfyUI (generador IA) detectado',
+            'automatic1111': 'Automatic1111 (Stable Diffusion UI) detectado',
+            'midjourney': 'Midjourney detectado',
+            'dall-e': 'DALL-E detectado',
+            'dall·e': 'DALL-E detectado',
+            'openai': 'Herramienta OpenAI detectada',
+            'chatgpt': 'ChatGPT detectado',
+            'ai_generated': 'Marcador ai_generated encontrado',
+            'ai generated': 'Marcador AI generated encontrado',
+            'dream\x00': 'DreamStudio/Stable Diffusion detectado',
+            'invoke-ai': 'InvokeAI detectado',
+            'novelai': 'NovelAI detectado',
+            'nai diffusion': 'NAI Diffusion detectado',
+            'flux': 'FLUX (modelo IA) detectado',
+            'kandinsky': 'Kandinsky (modelo IA) detectado',
+            'deepfloyd': 'DeepFloyd IF detectado',
+            'imagen': 'Google Imagen detectado',
+            'firefly': 'Adobe Firefly detectado',
+            'bing image creator': 'Bing Image Creator detectado',
+            'playground ai': 'Playground AI detectado',
+            'leonardo.ai': 'Leonardo AI detectado',
+            'generated by': 'Marcador "generated by" encontrado',
+            'made with': 'Marcador "made with" en metadata',
+            'samplereuler': 'Sampler de difusión (Euler) detectado',
+            'samplerdpm': 'Sampler de difusión (DPM) detectado',
+            'cfg scale': 'Parámetro CFG Scale (difusión) detectado',
+            'negative prompt': 'Prompt negativo (difusión) detectado',
+            'lora:': 'LoRA adaptador detectado',
+            'controlnet': 'ControlNet detectado',
+        }
+        
+        for pattern, description in ai_indicators.items():
+            if pattern in text_lower:
+                marker = f'{description} [en {source}]'
+                if marker not in result['ai_markers']:
+                    result['ai_markers'].append(marker)
+    
+    def _search_ai_strings(self, raw_bytes: bytes, result: Dict):
+        """Búsqueda genérica de strings IA en los bytes crudos del archivo"""
+        try:
+            # Buscar solo en primeros 64KB (headers/metadata) para eficiencia
+            search_region = raw_bytes[:65536]
+            text = search_region.decode('utf-8', errors='replace').lower()
+            
+            # Patrones muy específicos que NO aparecen en fotos normales
+            critical_patterns = {
+                'parameters\x00': 'Chunk "parameters" de Stable Diffusion A1111',
+                'prompt\x00': 'Chunk "prompt" de generador IA',
+                'aesthetic_score': 'Parámetro aesthetic_score de SDXL',
+                'score_9': 'Parámetro score_9 de Pony Diffusion',
+                'steps:': 'Parámetro "steps" de difusión',
+                'sampler:': 'Parámetro "sampler" de difusión',
+                'model hash': 'Hash de modelo de difusión',
+                'clip skip': 'Parámetro CLIP skip de difusión',
+            }
+            
+            for pattern, description in critical_patterns.items():
+                if pattern in text:
+                    marker = f'{description} [binario]'
+                    if marker not in result['ai_markers']:
+                        result['ai_markers'].append(marker)
+        except Exception:
+            pass
+
     def get_summary(self, analysis: Dict) -> str:
         """Generar resumen legible del análisis"""
         if analysis.get('is_ai_generated'):
