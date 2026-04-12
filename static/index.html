@@ -528,6 +528,7 @@
                 <div id="modelProgressFill" class="loading-progress-fill"></div>
             </div>
             <div id="modelStep" class="loading-step" style="color:#3b82f6;"></div>
+            <div id="gpuBadge" style="display:none; margin-top:8px; font-size:.75rem; padding:3px 10px; border-radius:20px; display:inline-block;"></div>
         </div>
 
         <!-- Loading -->
@@ -621,6 +622,16 @@
                     const r = await fetch(API + '/model-status');
                     const s = await r.json();
                     const banner = document.getElementById('modelBanner');
+                    const gpuBadge = document.getElementById('gpuBadge');
+
+                    // Mostrar badge GPU/CPU
+                    if (s.gpu !== undefined) {
+                        gpuBadge.style.display = 'inline-block';
+                        gpuBadge.textContent = s.gpu ? ('GPU: ' + (s.gpu_name || 'NVIDIA')) : 'CPU';
+                        gpuBadge.style.background = s.gpu ? '#dcfce7' : '#fef3c7';
+                        gpuBadge.style.color = s.gpu ? '#166534' : '#92400e';
+                    }
+
                     if (s.status === 'downloading' || s.status === 'loading' || s.status === 'not_loaded') {
                         banner.style.display = 'block';
                         document.getElementById('modelBannerTitle').textContent =

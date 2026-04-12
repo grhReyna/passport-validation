@@ -81,23 +81,28 @@ if [ "$SKIP_INSTALL" = false ]; then
     # Actualizar pip
     $VENV_PYTHON -m pip install --upgrade pip --quiet >/dev/null 2>&1
     
-    # Detectar GPU e instalar PyTorch correcto
-    echo "  Detectando GPU..."
-    if GPU_INFO=$($VENV_PYTHON detect_gpu.py 2>/dev/null); then
-        HAS_GPU=$(echo "$GPU_INFO" | grep -o '"has_gpu": true' | wc -l)
-        if [ "$HAS_GPU" -gt 0 ]; then
-            CUDA_VER=$(echo "$GPU_INFO" | grep -o '"cuda_version": "[^"]*"' | cut -d'"' -f4)
-            echo "  ✓ GPU NVIDIA detectada (CUDA: $CUDA_VER)"
-            echo "  Instalando PyTorch con soporte GPU..."
-            PYTORCH_CMD=$(echo "$GPU_INFO" | grep -o '"pytorch_install_cmd": "[^"]*"' | cut -d'"' -f4)
-            $VENV_PYTHON -m pip install $PYTORCH_CMD --quiet >/dev/null 2>&1
-        else
-            echo "  GPU no disponible, usando CPU"
-            $VENV_PYTHON -m pip install torch==2.0.0 torchvision==0.15.0 --quiet >/dev/null 2>&1
+    # Detectar GPU NVIDIA e instalar PyTorch con CUDA si es posible
+    HAS_NVIDIA=false
+    if command -v nvidia-smi &>/dev/null; then
+        GPU_NAME=$(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null | head -1)
+        if [ -n "$GPU_NAME" ]; then
+            HAS_NVIDIA=true
+            echo "  GPU detectada: $GPU_NAME"
         fi
-    else
-        echo "  ⚠️ Error detectando GPU, usando configuración por defecto..."
-        $VENV_PYTHON -m pip install torch==2.0.0 torchvision==0.15.0 --quiet >/dev/null 2>&1
+    fi
+    
+    if [ "$HAS_NVIDIA" = true ]; then
+        TORCH_CUDA=$($VENV_PYTHON -c "import torch; print(torch.cuda.is_available())" 2>/dev/null || echo "False")
+        if [ "$TORCH_CUDA" != "True" ]; then
+            echo "  Instalando PyTorch con soporte CUDA (GPU)..."
+            if $VENV_PYTHON -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121 --quiet >/dev/null 2>&1; then
+                echo "  OK: PyTorch CUDA instalado"
+            else
+                echo "  ⚠️ No se pudo instalar PyTorch CUDA, usando CPU"
+            fi
+        else
+            echo "  OK: PyTorch CUDA ya instalado"
+        fi
     fi
     
     # Verificar si requirements.txt existe e instalar dependencias

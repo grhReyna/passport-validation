@@ -129,7 +129,12 @@ async def health_check():
 @app.get("/model-status", tags=["Sistema"])
 async def model_status():
     """Estado de carga/descarga del modelo"""
-    return _model_status
+    import torch
+    status = dict(_model_status)
+    status["gpu"] = torch.cuda.is_available()
+    if status["gpu"]:
+        status["gpu_name"] = torch.cuda.get_device_name(0)
+    return status
 
 @app.post("/verify-passport", tags=["Verificación"])
 async def verify_passport_endpoint(file: UploadFile = File(...)):
