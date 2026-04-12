@@ -49,6 +49,14 @@ class PassportVerifier:
         self.logger = logging.getLogger(f"PassportVerifier-{self.session_id}")
         self.logger.info(f"Verificador inicializado: {self.session_id}")
     
+    def _update_analysis_status(self, step: str, progress: int, total: int):
+        """Reportar progreso del análisis al endpoint /model-status."""
+        try:
+            import app as _app
+            _app._model_status = {"status": "analyzing", "step": step, "progress": progress, "total": total}
+        except Exception:
+            pass
+    
     def verify(self, image_input: Union[str, Path, bytes],
               verbose: bool = False) -> Dict:
         """
@@ -84,6 +92,7 @@ class PassportVerifier:
             
             # ====== ETAPA 1: PREPROCESAMIENTO ======
             self.logger.info("Etapa 1/4: Preprocesamiento de imagen")
+            self._update_analysis_status("Preprocesando imagen...", 1, 4)
             
             try:
                 processed_image, preprocessing_metadata = preprocessing.preprocess_pipeline(
@@ -123,6 +132,7 @@ class PassportVerifier:
             
             # ====== ETAPA 2: OCR ======
             self.logger.info("Etapa 2/4: Extracción de texto (OCR)")
+            self._update_analysis_status("Extrayendo texto (OCR)...", 2, 4)
             
             try:
                 # OCR general robusto (orientación + variantes)
@@ -171,6 +181,7 @@ class PassportVerifier:
             
             # ====== ETAPA 3: VALIDACIÓN DE DATOS (MRZ o Mexicano) ======
             self.logger.info("Etapa 3/4: Validación de datos de pasaporte")
+            self._update_analysis_status("Validando MRZ...", 3, 4)
             
             try:
                 full_text = ocr_result.get("full_text", "")
@@ -261,6 +272,7 @@ class PassportVerifier:
             
             # ====== ETAPA 4: VALIDACIÓN DE AUTENTICIDAD Y SCORING ======
             self.logger.info("Etapa 4/4: Análisis de autenticidad y cálculo de score")
+            self._update_analysis_status("Calculando score de autenticidad...", 4, 4)
             
             try:
                 validator = AuthenticityValidator()

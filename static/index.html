@@ -776,7 +776,13 @@
                         bar.classList.add('show');
                         fill.style.width = '100%';
                         step.textContent = s.step || '';
-                    } else if (s.status === 'ready') {
+                    } else if (s.status === 'analyzing') {
+                        title.textContent = s.step || 'Analizando pasaporte...';
+                        subtitle.textContent = 'Etapa ' + s.progress + ' de ' + s.total;
+                        bar.classList.add('show');
+                        if (s.total > 0) fill.style.width = Math.round((s.progress / s.total) * 100) + '%';
+                        step.textContent = '';
+                    } else {
                         title.textContent = 'Analizando pasaporte...';
                         subtitle.textContent = 'Procesando OCR, MRZ y detección de IA';
                         bar.classList.remove('show');

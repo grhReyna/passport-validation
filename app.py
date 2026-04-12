@@ -188,7 +188,18 @@ async def verify_passport_endpoint(file: UploadFile = File(...)):
             logger.info("Esperando a que el modelo termine de cargarse...")
             _model_ready.wait(timeout=600)
         
+        # Reportar progreso de análisis
+        _model_status["status"] = "analyzing"
+        _model_status["step"] = "Preprocesando imagen..."
+        _model_status["progress"] = 1
+        _model_status["total"] = 4
+        
         result = verify_passport(contents, verbose=False)
+        
+        _model_status["status"] = "ready"
+        _model_status["step"] = "Modelo listo"
+        _model_status["progress"] = 0
+        _model_status["total"] = 0
         
         # Validar que hubo resultado
         if result.get("error"):

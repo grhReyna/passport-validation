@@ -16,6 +16,7 @@ transformers>=4.35.0
 opencv-python>=4.8.0
 pillow>=10.0.0
 scikit-image>=0.21.0
+easyocr>=1.7.0
 
 # ============================================================================
 # ANÁLISIS DE DATOS Y COMPUTACIÓN NUMÉRICA
